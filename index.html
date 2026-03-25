@@ -1,0 +1,1439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lyric Vault</title>
+<!--
+  FONTS
+  UI:     DM Sans — geometric sans, excellent screen clarity, wide language support
+  Lyrics: Newsreader — designed for long-form reading comfort, generous spacing, optical sizing
+  Mono:   JetBrains Mono — filter tags / counts
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,400&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0c0c0d;--bg2:#131315;--bg3:#1a1a1d;--bg4:#222226;--bg5:#2a2a2f;
+  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);--border3:rgba(255,255,255,0.18);
+  --text:#eceae4;--text2:#9e9a93;--text3:#565350;
+  --gold:#d4a853;--gold-bg:rgba(212,168,83,0.08);--gold-border:rgba(212,168,83,0.22);
+  --ann:#7eb8c4;--ann-bg:rgba(126,184,196,0.07);--ann-border:rgba(126,184,196,0.2);
+  --lyric-size:16px;
+  --lyric-lh:1.9;
+  --r:10px;--rsm:6px;
+  --ui:'DM Sans',system-ui,sans-serif;
+  --lyric:'Newsreader','Georgia',serif;
+  --mono:'JetBrains Mono',monospace;
+}
+body{font-family:var(--ui);background:var(--bg);color:var(--text);font-size:14px;line-height:1.55;overflow:hidden}
+.shell{display:flex;height:100vh}
+
+/* ── PIN / SETUP OVERLAYS ── */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:999;display:flex;align-items:center;justify-content:center}
+.overlay-card{background:var(--bg2);border:1px solid var(--border2);border-radius:16px;padding:32px 28px;width:340px;display:flex;flex-direction:column;gap:18px}
+.overlay-title{font-family:var(--lyric);font-size:22px;color:var(--gold);text-align:center}
+.overlay-sub{font-size:12.5px;color:var(--text3);text-align:center;line-height:1.6;margin-top:-8px}
+.pin-inputs{display:flex;gap:8px;justify-content:center}
+.pin-digit{width:44px;height:52px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:var(--mono);font-size:22px;text-align:center;outline:none;transition:border-color .15s;-moz-appearance:textfield}
+.pin-digit:focus{border-color:var(--gold)}
+.pin-digit::-webkit-outer-spin-button,.pin-digit::-webkit-inner-spin-button{-webkit-appearance:none}
+.pin-error{font-size:12px;color:rgba(196,123,123,.9);text-align:center;min-height:16px}
+.fb-input{width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--rsm);padding:9px 11px;color:var(--text);font-family:var(--mono);font-size:11.5px;outline:none;transition:border-color .15s}
+.fb-input:focus{border-color:var(--gold)}
+.fb-input::placeholder{color:var(--text3)}
+.overlay-label{font-size:11px;color:var(--text3);margin-bottom:4px}
+.overlay-btn{width:100%;padding:11px;background:var(--gold);color:#0c0c0d;border:none;border-radius:var(--r);font-family:var(--ui);font-size:13.5px;font-weight:500;cursor:pointer;transition:background .15s}
+.overlay-btn:hover{background:#ddb868}
+.overlay-link{font-size:11.5px;color:var(--text3);text-align:center;cursor:pointer;transition:color .15s}
+.overlay-link:hover{color:var(--gold)}
+
+/* ── Sidebar ── */
+.sidebar{width:268px;min-width:268px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.sb-top{padding:16px 15px 12px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;gap:8px}
+.wordmark{font-family:var(--lyric);font-size:18px;color:var(--gold);flex:1}
+.wordmark em{font-style:italic;color:var(--text3);font-size:11px;display:block;font-family:var(--ui);margin-top:1px}
+.sync-dot{width:7px;height:7px;border-radius:50%;background:var(--text3);flex-shrink:0;transition:background .3s}
+.sync-dot.live{background:#6ab8a0}
+.sync-dot.syncing{background:var(--gold);animation:pulse .8s ease-in-out infinite alternate}
+@keyframes pulse{from{opacity:.4}to{opacity:1}}
+.sb-filters{flex:1;overflow-y:auto;padding:10px 11px 0}
+
+/* filter blocks */
+.fblock{margin-bottom:14px}
+.fblock-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.fblock-label{font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--text3)}
+.fblock-clear{font-size:10px;color:var(--text3);background:none;border:none;cursor:pointer;font-family:var(--ui);padding:0;transition:color .15s}
+.fblock-clear:hover{color:var(--gold)}
+.ftags{display:flex;flex-wrap:wrap;gap:4px}
+.ftag{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:12px;font-size:11px;cursor:pointer;border:1px solid var(--border2);background:none;color:var(--text2);font-family:var(--mono);transition:all .15s;white-space:nowrap;line-height:1.4}
+.ftag:hover{border-color:var(--border3);color:var(--text)}
+.ftag.on{background:rgba(255,255,255,.05)}
+.ftag.zero{opacity:.3;cursor:default;pointer-events:none}
+.ftag-count{font-size:9.5px;opacity:.6}
+.ftag-lang.on{color:var(--gold);border-color:var(--gold-border);background:var(--gold-bg)}
+.ftag-mood.on{color:rgba(155,142,196,.95);border-color:rgba(155,142,196,.3);background:rgba(155,142,196,.07)}
+.ftag-rhyme.on{color:rgba(196,123,123,.95);border-color:rgba(196,123,123,.3);background:rgba(196,123,123,.07)}
+.ftag-ann.on{color:var(--ann);border-color:var(--ann-border);background:var(--ann-bg)}
+
+/* theme tree */
+.tcat{margin-bottom:2px}
+.tcat-head{display:flex;align-items:center;gap:5px;padding:4px 7px;border-radius:var(--rsm);cursor:pointer;transition:all .15s;border:1px solid transparent;user-select:none}
+.tcat-head:hover{background:var(--bg3)}
+.tcat-head.on{background:rgba(106,184,160,.07);border-color:rgba(106,184,160,.2)}
+.tcat-head.zero{opacity:.3;cursor:default;pointer-events:none}
+.tcat-arrow{font-size:9px;color:var(--text3);transition:transform .15s;flex-shrink:0}
+.tcat-arrow.open{transform:rotate(90deg)}
+.tcat-name{font-size:12px;color:var(--text2);flex:1}
+.tcat-head.on .tcat-name{color:rgba(106,184,160,.95)}
+.tcat-count{font-size:9.5px;font-family:var(--mono);color:var(--text3)}
+.tcat-children{padding-left:14px;margin-top:2px;display:none}
+.tcat-children.open{display:block}
+.tsub{display:flex;align-items:center;gap:5px;padding:3px 7px;border-radius:var(--rsm);cursor:pointer;transition:all .15s;border:1px solid transparent}
+.tsub:hover{background:var(--bg3)}
+.tsub.on{background:rgba(106,184,160,.07);border-color:rgba(106,184,160,.2)}
+.tsub.zero{opacity:.28;cursor:default;pointer-events:none}
+.tsub-name{font-size:11.5px;color:var(--text2);flex:1}
+.tsub.on .tsub-name{color:rgba(106,184,160,.9)}
+.tsub-count{font-size:9.5px;font-family:var(--mono);color:var(--text3)}
+
+/* rhyme family tree */
+.rfam{margin-bottom:3px}
+.rfam-head{display:flex;align-items:center;gap:5px;padding:4px 7px;border-radius:var(--rsm);cursor:pointer;transition:all .15s;border:1px solid transparent;user-select:none}
+.rfam-head:hover{background:var(--bg3)}
+.rfam-head.on{background:rgba(196,123,123,.07);border-color:rgba(196,123,123,.2)}
+.rfam-head.zero{opacity:.28;cursor:default;pointer-events:none}
+.rfam-arrow{font-size:9px;color:var(--text3);transition:transform .15s;flex-shrink:0}
+.rfam-arrow.open{transform:rotate(90deg)}
+.rfam-name{font-size:12px;color:var(--text2);flex:1}
+.rfam-head.on .rfam-name{color:rgba(196,123,123,.95)}
+.rfam-count{font-size:9.5px;font-family:var(--mono);color:var(--text3)}
+.rfam-children{padding-left:14px;margin-top:2px;display:none}
+.rfam-children.open{display:block}
+.rend{display:flex;align-items:center;gap:5px;padding:3px 7px;border-radius:var(--rsm);cursor:pointer;transition:all .15s;border:1px solid transparent}
+.rend:hover{background:var(--bg3)}
+.rend.on{background:rgba(196,123,123,.07);border-color:rgba(196,123,123,.2)}
+.rend.zero{display:none}
+.rend-name{font-size:11.5px;color:var(--text2);font-family:var(--mono);flex:1}
+.rend.on .rend-name{color:rgba(196,123,123,.9)}
+.rend-count{font-size:9.5px;font-family:var(--mono);color:var(--text3)}
+
+/* text search + slider */
+.fsearch{width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--rsm);padding:7px 10px;color:var(--text);font-family:var(--ui);font-size:12px;outline:none;transition:border-color .15s}
+.fsearch:focus{border-color:var(--gold)}
+.fsearch::placeholder{color:var(--text3)}
+.size-row{display:flex;align-items:center;gap:7px}
+.size-lbl{font-size:10px;color:var(--text3);font-family:var(--mono);min-width:26px;text-align:right}
+input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:3px;background:var(--bg4);border-radius:2px;outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--gold);cursor:pointer;border:2px solid var(--bg2)}
+input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:var(--gold);cursor:pointer;border:2px solid var(--bg2)}
+
+.sb-foot{padding:11px 12px;border-top:1px solid var(--border);flex-shrink:0}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:8px}
+.stat{background:var(--bg3);border-radius:var(--rsm);padding:7px 9px}
+.stat-n{font-family:var(--mono);font-size:16px;color:var(--gold)}
+.stat-l{font-size:9.5px;color:var(--text3);margin-top:1px}
+.sb-actions{display:flex;gap:5px;flex-wrap:wrap}
+.act-btn{flex:1;padding:6px 7px;border-radius:var(--rsm);border:1px solid var(--border2);background:none;color:var(--text3);font-family:var(--ui);font-size:11px;cursor:pointer;transition:all .15s;text-align:center;white-space:nowrap}
+.act-btn:hover{background:var(--bg3);color:var(--text2)}
+
+/* ── Main ── */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.main-nav{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.main-tab{flex:1;padding:12px 20px;font-size:13px;font-weight:500;cursor:pointer;border:none;background:none;color:var(--text3);font-family:var(--ui);transition:all .15s;border-bottom:2px solid transparent;margin-bottom:-1px}
+.main-tab:hover{color:var(--text2);background:rgba(255,255,255,.02)}
+.main-tab.active{color:var(--text);border-bottom-color:var(--gold)}
+.topbar{padding:9px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;min-height:40px}
+.active-filters{display:flex;flex-wrap:wrap;gap:4px;flex:1;min-width:0}
+.af-chip{font-size:10px;padding:2px 7px;border-radius:8px;font-family:var(--mono);cursor:pointer;transition:opacity .15s;white-space:nowrap}
+.af-chip:hover{opacity:.65}
+.af-chip::after{content:' ×';opacity:.5}
+.result-count{font-size:11px;color:var(--text3);font-family:var(--mono);white-space:nowrap}
+.sort-sel{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--rsm);padding:4px 7px;color:var(--text2);font-family:var(--ui);font-size:11px;outline:none;cursor:pointer;flex-shrink:0}
+.sort-sel option{background:var(--bg3)}
+.content{flex:1;overflow-y:auto;padding:14px 18px}
+
+/* ── Entry cards ── */
+.entries{display:flex;flex-direction:column;gap:7px}
+.entry{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:13px 15px;cursor:pointer;transition:all .15s;position:relative}
+.entry:hover{border-color:var(--border2);background:var(--bg3)}
+.entry.active{border-color:var(--gold);background:var(--gold-bg)}
+.entry-body{
+  font-family:var(--lyric);
+  font-size:var(--lyric-size);
+  font-optical-sizing:auto;
+  line-height:var(--lyric-lh);
+  color:var(--text);
+  white-space:pre-wrap;
+  word-break:break-word;
+  letter-spacing:.01em;
+}
+.entry-ann{margin-top:7px;padding:6px 10px;background:var(--ann-bg);border-left:2px solid var(--ann-border);border-radius:0 var(--rsm) var(--rsm) 0;font-size:11px;color:var(--ann);font-style:italic;line-height:1.5;font-family:var(--ui)}
+.entry-foot{display:flex;align-items:center;gap:5px;margin-top:7px;flex-wrap:wrap}
+.tag{font-size:10px;padding:2px 7px;border-radius:8px;font-family:var(--mono);line-height:1.5}
+.tag-theme{background:rgba(106,184,160,.08);color:rgba(106,184,160,.85)}
+.tag-mood{background:rgba(155,142,196,.08);color:rgba(155,142,196,.85)}
+.tag-rhyme{background:rgba(196,123,123,.08);color:rgba(196,123,123,.85)}
+.tag-plain{background:var(--bg4);color:var(--text3)}
+.tag-lang-en{background:rgba(212,168,83,.1);color:rgba(212,168,83,.85)}
+.tag-lang-pt{background:rgba(126,184,196,.1);color:rgba(126,184,196,.85)}
+.tag-lang-mix{background:rgba(155,142,196,.1);color:rgba(155,142,196,.85)}
+.entry-src{margin-left:auto;font-size:9.5px;color:var(--text3);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
+
+/* ── Detail panel ── */
+.panel{width:336px;min-width:336px;background:var(--bg2);border-left:1px solid var(--border);display:flex;flex-direction:column;transition:width .2s,min-width .2s}
+.panel.closed{width:0;min-width:0;overflow:hidden}
+.panel-top{padding:11px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0}
+.panel-title{font-size:12px;font-weight:500;flex:1;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.panel-close{background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:2px 5px;border-radius:4px;line-height:1}
+.panel-close:hover{background:var(--bg3);color:var(--text)}
+.panel-body{flex:1;overflow-y:auto;padding:13px 14px}
+.panel-sec{margin-bottom:17px}
+.panel-sec-lbl{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:7px;display:flex;align-items:center;justify-content:space-between}
+.focus-text{
+  font-family:var(--lyric);
+  font-size:var(--lyric-size);
+  font-optical-sizing:auto;
+  line-height:var(--lyric-lh);
+  color:var(--text);
+  background:var(--bg3);
+  border-radius:var(--r);
+  padding:13px 14px;
+  border-left:3px solid var(--gold);
+  white-space:pre-wrap;
+  word-break:break-word;
+  letter-spacing:.01em;
+}
+.ann-area{width:100%;background:var(--bg3);border:1px solid var(--ann-border);border-radius:var(--r);padding:9px 11px;color:var(--ann);font-family:var(--ui);font-size:12.5px;outline:none;resize:vertical;min-height:78px;line-height:1.6;transition:border-color .15s}
+.ann-area:focus{border-color:var(--ann)}
+.ann-area::placeholder{color:var(--text3);font-style:italic}
+.save-ann-btn{padding:5px 12px;background:var(--ann-bg);border:1px solid var(--ann-border);color:var(--ann);border-radius:var(--rsm);cursor:pointer;font-family:var(--ui);font-size:11.5px;transition:all .15s;margin-top:5px}
+.save-ann-btn:hover{background:rgba(126,184,196,.14)}
+.copy-btn{padding:4px 11px;background:var(--bg4);border:1px solid var(--border2);color:var(--text2);border-radius:var(--rsm);cursor:pointer;font-family:var(--ui);font-size:11px;transition:all .15s}
+.copy-btn:hover{background:var(--bg5);color:var(--text)}
+.copy-btn.copied{color:rgba(106,184,160,.9);border-color:rgba(106,184,160,.3);background:rgba(106,184,160,.07)}
+.find-rel-btn{padding:4px 11px;background:var(--bg4);border:1px solid var(--border2);color:var(--text2);border-radius:var(--rsm);cursor:pointer;font-family:var(--ui);font-size:11px;transition:all .15s}
+.find-rel-btn:hover{background:var(--gold-bg);color:var(--gold);border-color:var(--gold-border)}
+.rel-item{padding:8px 10px;background:var(--bg3);border-radius:var(--rsm);margin-bottom:5px;cursor:pointer;border:1px solid transparent;transition:all .15s}
+.rel-item:hover{border-color:var(--border2)}
+.rel-text{font-family:var(--lyric);font-size:12.5px;line-height:1.6;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.rel-meta{font-size:10.5px;color:var(--text3);margin-top:3px;display:flex;gap:5px;align-items:center}
+
+/* ── Writing view ── */
+.writing-wrap{display:flex;flex:1;min-height:0;overflow:hidden}
+.writing-editor-col{flex:1;display:flex;flex-direction:column;padding:15px 18px;min-width:0;overflow:hidden;border-right:1px solid var(--border)}
+.writing-lbl{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px}
+.writing-ta{
+  flex:1;width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);
+  padding:15px 17px;color:var(--text);
+  font-family:var(--lyric);font-size:var(--lyric-size);font-optical-sizing:auto;
+  line-height:var(--lyric-lh);letter-spacing:.01em;
+  outline:none;resize:none;transition:border-color .15s;min-height:0
+}
+.writing-ta:focus{border-color:var(--gold)}
+.writing-ta::placeholder{color:var(--text3);font-family:var(--ui);font-size:13px}
+.writing-foot{display:flex;gap:7px;margin-top:10px;align-items:center;flex-shrink:0}
+.writing-hint{font-size:11px;color:var(--text3);flex:1}
+.writing-results-col{width:340px;min-width:340px;display:flex;flex-direction:column;overflow:hidden}
+.wr-header{padding:12px 15px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2);font-weight:500;flex-shrink:0}
+.wr-body{flex:1;overflow-y:auto;padding:12px 14px}
+.wr-sec{margin-bottom:16px}
+.wr-sec-lbl{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:7px}
+.wr-insight{background:var(--bg3);border-radius:var(--rsm);padding:9px 11px;margin-bottom:6px;font-size:12px;color:var(--text2);line-height:1.55;border-left:2px solid var(--gold-border)}
+.wr-sug{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;margin-bottom:6px;border-left:none}
+.wr-sug-text{font-family:var(--lyric);font-size:13px;font-optical-sizing:auto;line-height:1.65;color:var(--text);white-space:pre-wrap;letter-spacing:.01em}
+.wr-sug-meta{margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.wr-sug-why{font-size:10.5px;color:var(--text3);font-style:italic}
+.wr-sug-actions{display:flex;gap:5px;margin-top:7px}
+
+/* ── Import ── */
+.import-view{padding:20px;max-width:620px}
+.import-view h2{font-family:var(--lyric);font-size:20px;margin-bottom:4px}
+.import-view p{color:var(--text2);font-size:12.5px;margin-bottom:17px;line-height:1.6}
+.drop-zone{border:1px dashed var(--border3);border-radius:var(--r);padding:28px 20px;text-align:center;cursor:pointer;transition:all .2s}
+.drop-zone:hover,.drop-zone.over{border-color:var(--gold);background:var(--gold-bg)}
+.drop-zone input{display:none}
+.dz-icon{font-size:22px;margin-bottom:7px;opacity:.4}
+.dz-title{font-size:13px;color:var(--text2);margin-bottom:3px}
+.dz-sub{font-size:11px;color:var(--text3)}
+.or-line{display:flex;align-items:center;gap:10px;color:var(--text3);font-size:11px;margin:12px 0}
+.or-line::before,.or-line::after{content:'';flex:1;height:1px;background:var(--border)}
+.igroup{margin-bottom:12px}
+.ilabel{font-size:11.5px;color:var(--text2);display:block;margin-bottom:5px}
+textarea{width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);padding:11px 13px;color:var(--text);font-family:var(--lyric);font-size:14px;outline:none;resize:vertical;min-height:130px;line-height:1.75;transition:border-color .15s}
+textarea:focus{border-color:var(--gold)}
+textarea::placeholder{color:var(--text3);font-family:var(--ui);font-size:12.5px}
+.progress-bar{height:3px;background:var(--bg4);border-radius:2px;overflow:hidden;margin:8px 0}
+.progress-fill{height:100%;background:var(--gold);border-radius:2px;transition:width .3s}
+.log-box{background:var(--bg3);border-radius:var(--r);padding:8px 11px;font-family:var(--mono);font-size:10.5px;color:var(--text3);max-height:90px;overflow-y:auto;line-height:1.9;border:1px solid var(--border)}
+.log-line{animation:fadein .2s ease}
+@keyframes fadein{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:none}}
+.btn{padding:7px 15px;border-radius:var(--r);border:none;cursor:pointer;font-family:var(--ui);font-size:12.5px;font-weight:500;transition:all .15s}
+.btn-gold{background:var(--gold);color:#0c0c0d}
+.btn-gold:hover{background:#ddb868}
+.btn-gold:disabled{opacity:.4;cursor:not-allowed}
+.btn-ghost{background:var(--bg3);color:var(--text2);border:1px solid var(--border2)}
+.btn-ghost:hover{background:var(--bg4);color:var(--text)}
+.btn-row{display:flex;gap:7px;flex-wrap:wrap;margin-top:5px}
+
+/* misc */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:230px;color:var(--text3);text-align:center;gap:7px}
+.empty p{font-size:12.5px;max-width:210px;line-height:1.6}
+.spinner-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:120px;gap:9px}
+.spin{width:21px;height:21px;border:2px solid var(--border2);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin-label{font-size:11px;color:var(--text3)}
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bg5);border-radius:4px}
+</style>
+</head>
+<body>
+
+<!-- ── PIN OVERLAY ── -->
+<div class="overlay" id="pin-overlay" style="display:none">
+  <div class="overlay-card">
+    <div class="overlay-title">Lyric Vault</div>
+    <div class="overlay-sub" id="pin-sub">Enter your 6-digit PIN</div>
+    <div class="pin-inputs" id="pin-inputs">
+      <input class="pin-digit" type="number" maxlength="1" min="0" max="9">
+      <input class="pin-digit" type="number" maxlength="1" min="0" max="9">
+      <input class="pin-digit" type="number" maxlength="1" min="0" max="9">
+      <input class="pin-digit" type="number" maxlength="1" min="0" max="9">
+      <input class="pin-digit" type="number" maxlength="1" min="0" max="9">
+      <input class="pin-digit" type="number" maxlength="1" min="0" max="9">
+    </div>
+    <div class="pin-error" id="pin-error"></div>
+    <button class="overlay-btn" id="pin-submit">Unlock →</button>
+    <div class="overlay-link" id="pin-skip-link">Use without sync (local only)</div>
+  </div>
+</div>
+
+<!-- ── FIREBASE SETUP OVERLAY ── -->
+<div class="overlay" id="setup-overlay" style="display:none">
+  <div class="overlay-card" style="width:400px;max-width:95vw">
+    <div class="overlay-title">Firebase Setup</div>
+    <div class="overlay-sub">Paste your Firebase config to enable real-time sync across devices. Leave blank to use local only.</div>
+    <div>
+      <div class="overlay-label">Firebase API Key</div>
+      <input class="fb-input" id="fb-apikey" placeholder="AIzaSy...">
+    </div>
+    <div>
+      <div class="overlay-label">Database URL</div>
+      <input class="fb-input" id="fb-dburl" placeholder="https://your-project-default-rtdb.firebaseio.com">
+    </div>
+    <div>
+      <div class="overlay-label">Project ID</div>
+      <input class="fb-input" id="fb-projectid" placeholder="your-project-id">
+    </div>
+    <div>
+      <div class="overlay-label">Set 6-digit PIN (protects your vault)</div>
+      <input class="fb-input" id="fb-pin" type="number" placeholder="e.g. 482910" maxlength="6" style="letter-spacing:.2em;font-size:16px">
+    </div>
+    <button class="overlay-btn" id="fb-save-btn">Connect Firebase →</button>
+    <div class="overlay-link" id="fb-skip">Skip — use local storage only</div>
+  </div>
+</div>
+
+<!-- ── APP SHELL ── -->
+<div class="shell" id="app-shell" style="display:none">
+
+<aside class="sidebar">
+  <div class="sb-top">
+    <div class="wordmark">Lyric Vault<em>your words, connected</em></div>
+    <div class="sync-dot" id="sync-dot" title="Not connected to Firebase"></div>
+  </div>
+  <div class="sb-filters" id="sb-filters"></div>
+  <div class="sb-foot">
+    <div class="stats">
+      <div class="stat"><div class="stat-n" id="st-entries">0</div><div class="stat-l">entries</div></div>
+      <div class="stat"><div class="stat-n" id="st-showing">0</div><div class="stat-l">showing</div></div>
+      <div class="stat"><div class="stat-n" id="st-cats">0</div><div class="stat-l">categories</div></div>
+      <div class="stat"><div class="stat-n" id="st-rhymes">0</div><div class="stat-l">rhyme groups</div></div>
+    </div>
+    <div class="sb-actions">
+      <button class="act-btn" onclick="showImport()">↑ Import</button>
+      <button class="act-btn" onclick="reanalyseAll()">⟳ Re-analyse</button>
+      <button class="act-btn" style="color:var(--gold)" onclick="exportVault()">↓ Export</button>
+      <button class="act-btn" style="color:var(--gold)" onclick="document.getElementById('vault-load-fi').click()">↑ Load<input type="file" id="vault-load-fi" accept=".json" style="display:none"></button>
+      <button class="act-btn" onclick="showFbSetup()">⚙ Sync</button>
+      <button class="act-btn" onclick="clearVault()">⊘ Clear</button>
+    </div>
+  </div>
+</aside>
+
+<div class="main">
+  <div class="main-nav">
+    <button class="main-tab active" id="tab-vault" onclick="switchTab('vault')">Previous Lyrics</button>
+    <button class="main-tab" id="tab-writing" onclick="switchTab('writing')">Current Project</button>
+  </div>
+
+  <div id="view-vault" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden">
+    <div class="topbar" id="topbar">
+      <div class="active-filters" id="active-filters"></div>
+      <span class="result-count" id="result-count"></span>
+      <select class="sort-sel" id="sort-sel" onchange="applyFilters()">
+        <option value="default">Sort: default</option>
+        <option value="source">A–Z title</option>
+        <option value="lang">Language</option>
+        <option value="mood">Mood</option>
+        <option value="rhyme">Rhyme</option>
+        <option value="annotated">Annotated first</option>
+      </select>
+    </div>
+    <div class="content" id="content"></div>
+  </div>
+
+  <div id="view-writing" style="display:none;flex-direction:column;flex:1;min-height:0;overflow:hidden">
+    <div class="writing-wrap">
+      <div class="writing-editor-col">
+        <div class="writing-lbl">Current lyrics</div>
+        <textarea class="writing-ta" id="writing-ta" placeholder="Paste or type your current lyrics…&#10;&#10;Hit Analyse to find relevant entries from your vault."></textarea>
+        <div class="writing-foot">
+          <span class="writing-hint" id="wr-hint">Write some lyrics, then hit Analyse.</span>
+          <button class="btn btn-ghost" onclick="clearWriting()" style="font-size:11.5px;padding:5px 11px">Clear</button>
+          <button class="btn btn-gold" id="wr-btn" onclick="analyseWriting()" style="font-size:12px;padding:6px 14px">Analyse →</button>
+        </div>
+      </div>
+      <div class="writing-results-col">
+        <div class="wr-header">Vault suggestions</div>
+        <div class="wr-body" id="wr-body"><div class="empty"><p>Write some lyrics and hit Analyse.</p></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="view-import" style="display:none;flex:1;overflow-y:auto"></div>
+</div>
+
+<div class="panel closed" id="panel">
+  <div class="panel-top">
+    <div class="panel-title" id="panel-title">Entry detail</div>
+    <button class="panel-close" onclick="closePanel()">×</button>
+  </div>
+  <div class="panel-body" id="panel-body"></div>
+</div>
+
+</div><!-- shell -->
+
+<!-- Firebase SDK (loaded only when configured) -->
+<script id="fb-app-script"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// TAXONOMY
+// ═══════════════════════════════════════════════════════════════
+const TAXONOMY = {
+  'Love':          ['Romantic love','Self-love','Motherly love','Heartbreak','Longing','Passion','Obsession','Unrequited love'],
+  'Identity':      ['Self-image','Confidence','Vulnerability','Growth','Purpose','Heritage','Masculinity / Femininity'],
+  'Ambition':      ['Success','Money','Hustle','Fame','Legacy','Competition','Goals'],
+  'Pain':          ['Loss','Grief','Betrayal','Struggle','Trauma','Loneliness','Addiction'],
+  'Joy':           ['Celebration','Gratitude','Freedom','Euphoria','Nostalgia','Fun'],
+  'Conflict':      ['Anger','Revenge','Enemies','Street life','Power','War','Justice'],
+  'Spirituality':  ['Faith','God','The universe','Death','Karma','Soul','Dreams'],
+  'Relationships': ['Friendship','Family','Loyalty','Trust','Toxic relationships','Community'],
+  'World':         ['Politics','Society','Inequality','Nature','Time','Change'],
+  'Craft':         ['Wordplay','Music','Art','Creativity','Storytelling']
+};
+const ALL_PARENTS = Object.keys(TAXONOMY);
+
+// ═══════════════════════════════════════════════════════════════
+// PHONETIC RHYME FAMILIES
+// Groups rhyme endings by sound similarity / singability.
+// Near-rhymes that work musically are grouped together.
+// Order matters — more specific patterns first.
+// ═══════════════════════════════════════════════════════════════
+const RHYME_FAMILIES = [
+  // ── Portuguese specific (check before generic EN) ──
+  { id:'pt-nasal',  label:'PT Nasals',    desc:'ão, ãe, am, em…',   test: r => /ão$|ãe$|ões$|ãos$/.test(r) || /[aeiou]m$/.test(r) },
+  { id:'pt-ade',    label:'PT -ade',      desc:'ade, dade, idade…',  test: r => /[aá]de$|dade$|tade$|idade$/.test(r) },
+  { id:'pt-cao',    label:'PT -ção/-são', desc:'ção, são…',          test: r => /ção$|são$|ção$/.test(r) },
+  { id:'pt-nte',    label:'PT -nte/-nde', desc:'ente, mente, ante…', test: r => /[aeiou]nte$|[aeiou]nde$|mente$/.test(r) },
+  { id:'pt-eiro',   label:'PT -eiro',     desc:'eiro, eira, ero…',   test: r => /eiro$|eira$|[^aeiou]ero$|[^aeiou]era$/.test(r) },
+  { id:'pt-inho',   label:'PT -inho',     desc:'inho, inha, ino…',   test: r => /inho$|inha$/.test(r) },
+  // ── English long vowels ──
+  { id:'long-a',    label:'Long-A',       desc:'ake, ame, ay, ace…', test: r => /ake$|ame$|ane$|ape$|ate$|aze$|ace$|age$|ay$|ai$|ey$/.test(r) },
+  { id:'long-e',    label:'Long-E',       desc:'eel, een, ee, ea…',  test: r => /eal$|eam$|ean$|eat$|eed$|eek$|eel$|een$|eep$|eer$|eet$|^ee$|^ea$/.test(r) },
+  { id:'long-i',    label:'Long-I',       desc:'ight, ine, ike…',    test: r => /ight$|ike$|ile$|ime$|ine$|ipe$|ire$|ise$|ite$|ive$/.test(r) },
+  { id:'long-o',    label:'Long-O',       desc:'one, oke, ow…',      test: r => /oan$|oat$|ode$|oke$|ole$|ome$|one$|ope$|ose$|ote$|^ow$/.test(r) },
+  { id:'long-u',    label:'Long-U',       desc:'une, oo, ew, ue…',   test: r => /ube$|ude$|uke$|ule$|une$|ure$|use$|ute$|^ew$|^oo$|oom$|oon$|oot$/.test(r) },
+  // ── R-coloured & diphthongs ──
+  { id:'ar',        label:'AR Sound',     desc:'ar, art, arm…',      test: r => /^ar$|ard$|ark$|arm$|art$|arge$/.test(r) },
+  { id:'or',        label:'OR Sound',     desc:'or, ore, aw…',       test: r => /^or$|ore$|orn$|ort$|^aw$|aught$|ought$/.test(r) },
+  { id:'er',        label:'ER Sound',     desc:'er, urn, ird…',      test: r => /^er$|erm$|ern$|ert$|^ir$|^ur$|urn$|urt$|ird$|irl$/.test(r) },
+  { id:'ow',        label:'OW Sound',     desc:'ound, out, own…',    test: r => /ound$|ount$|^out$|^own$|ouse$/.test(r) },
+  { id:'oi',        label:'OI Sound',     desc:'oy, oil, oin…',      test: r => /oil$|oin$|^oy$|oid$/.test(r) },
+  // ── Short vowels ──
+  { id:'short-a',   label:'Short-A',      desc:'at, an, ack, ash…',  test: r => /^at$|^ad$|^am$|^ap$|^an$|ack$|act$|ang$|ank$|ant$|ash$|ast$|atch$/.test(r) },
+  { id:'short-e',   label:'Short-E',      desc:'et, en, ell, end…',  test: r => /^et$|^ed$|^em$|^en$|eck$|ell$|elt$|end$|ent$|ess$|est$/.test(r) },
+  { id:'short-i',   label:'Short-I',      desc:'it, in, ill, ing…',  test: r => /^it$|^id$|^im$|^in$|ick$|ill$|imp$|ing$|ink$|int$/.test(r) },
+  { id:'short-o',   label:'Short-O',      desc:'ot, on, ock, ong…',  test: r => /^ot$|^od$|^om$|^on$|ock$|off$|ong$|oss$/.test(r) },
+  { id:'short-u',   label:'Short-U',      desc:'ut, un, uck, ump…',  test: r => /^ut$|^ud$|^um$|^un$|uck$|uff$|ull$|ump$|ung$|unk$|unt$|ust$/.test(r) },
+  // ── Consonant clusters ──
+  { id:'sh',        label:'SH / -tion',   desc:'tion, sion, sh…',    test: r => /tion$|sion$|ssion$|^sh$/.test(r) },
+  { id:'dark-l',    label:'Dark-L',       desc:'all, ell, ol, ul…',  test: r => /all$|oll$|ull$|^al$|^ol$|^ul$/.test(r) },
+  { id:'other',     label:'Other',        desc:'',                    test: () => true }
+];
+
+function getRhymeFamily(rg) {
+  if(!rg) return 'other';
+  const r = rg.toLowerCase();
+  for(const fam of RHYME_FAMILIES) {
+    if(fam.test(r)) return fam.id;
+  }
+  return 'other';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DATA LAYER
+// ═══════════════════════════════════════════════════════════════
+let vault = [];
+try { vault = JSON.parse(localStorage.getItem('lv2-vault')||'[]'); } catch(e){}
+
+// Migration: v1/v2 flat themes[] → themeParents + themeSubs
+function runMigration(){
+  const lookup = {};
+  Object.entries(TAXONOMY).forEach(([p,subs]) => {
+    lookup[p.toLowerCase()] = {p,s:null};
+    subs.forEach(s => {
+      lookup[s.toLowerCase()] = {p,s};
+      s.toLowerCase().split(/[\s\/]+/).forEach(w => { if(w.length>3 && !lookup[w]) lookup[w]={p,s}; });
+    });
+  });
+  let dirty=false;
+  vault.forEach(e => {
+    if(!e.themeParents) e.themeParents=[];
+    if(!e.themeSubs)    e.themeSubs=[];
+    if(e.themeParents.length===0 && e.themes && e.themes.length>0){
+      const ps=new Set(), ss=new Set();
+      e.themes.forEach(t => {
+        const tl=(t||'').toLowerCase().trim();
+        if(lookup[tl]){ps.add(lookup[tl].p);if(lookup[tl].s)ss.add(lookup[tl].s);return;}
+        tl.split(/[\s\/\-]+/).forEach(w=>{if(lookup[w]){ps.add(lookup[w].p);if(lookup[w].s)ss.add(lookup[w].s);}});
+        if(!ps.size){const mp=ALL_PARENTS.find(x=>x.toLowerCase()===tl);if(mp)ps.add(mp);}
+      });
+      if(!ps.size) e.themes.forEach(t=>{if(t)ps.add(t);});
+      e.themeParents=[...ps]; e.themeSubs=[...ss]; dirty=true;
+    }
+  });
+  if(dirty) localStorage.setItem('lv2-vault', JSON.stringify(vault));
+}
+runMigration();
+
+// Font size restore
+(function(){ const s=localStorage.getItem('lv-size'); if(s) document.documentElement.style.setProperty('--lyric-size',s+'px'); })();
+
+let fbReady=false, fbDb=null, fbSaveTimer=null;
+
+function save(){
+  localStorage.setItem('lv2-vault', JSON.stringify(vault));
+  updateStats();
+  if(fbReady && fbDb){
+    clearTimeout(fbSaveTimer);
+    fbSaveTimer = setTimeout(syncToFirebase, 600);
+  }
+}
+
+function syncToFirebase(){
+  if(!fbReady || !fbDb) return;
+  setSyncDot('syncing');
+  const entries={};
+  vault.forEach(e => entries[String(e.id)]=e);
+  fbDb.ref('lyric-vault/entries').set(entries)
+    .then(()=>setSyncDot('live'))
+    .catch(()=>setSyncDot(''));
+}
+
+function setSyncDot(state){
+  const d=document.getElementById('sync-dot');
+  if(!d) return;
+  d.className='sync-dot'+(state?' '+state:'');
+  d.title = state==='live'?'Synced to Firebase':state==='syncing'?'Syncing…':'Not connected';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FIREBASE SETUP
+// ═══════════════════════════════════════════════════════════════
+async function hashPin(pin){
+  const enc=new TextEncoder();
+  const data=enc.encode(pin+'lv-salt-2024');
+  const buf=await crypto.subtle.digest('SHA-256',data);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+function getFbConfig(){ try{return JSON.parse(localStorage.getItem('lv-fb-config')||'null');}catch(e){return null;} }
+
+async function initFirebase(config){
+  return new Promise((resolve,reject)=>{
+    // Load Firebase compat SDK dynamically
+    const scripts=[
+      'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',
+      'https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js'
+    ];
+    let loaded=0;
+    scripts.forEach(src=>{
+      const s=document.createElement('script');
+      s.src=src;
+      s.onload=()=>{ if(++loaded===scripts.length) resolve(); };
+      s.onerror=reject;
+      document.head.appendChild(s);
+    });
+  }).then(()=>{
+    const app=firebase.initializeApp({
+      apiKey:config.apiKey,
+      databaseURL:config.databaseURL,
+      projectId:config.projectId
+    });
+    fbDb=firebase.database(app);
+    fbReady=true;
+
+    // Real-time listener — merge remote changes
+    fbDb.ref('lyric-vault/entries').on('value', snap=>{
+      const remote=snap.val()||{};
+      const remoteArr=Object.values(remote);
+      if(!remoteArr.length) return;
+      // Merge: remote is source of truth
+      const localMap=new Map(vault.map(e=>[String(e.id),e]));
+      remoteArr.forEach(e=>{ if(e&&e.id) localMap.set(String(e.id),e); });
+      vault=[...localMap.values()];
+      runMigration();
+      localStorage.setItem('lv2-vault',JSON.stringify(vault));
+      updateStats();
+      buildFilterUI();
+      applyFilters();
+      setSyncDot('live');
+    });
+  });
+}
+
+function showFbSetup(){
+  document.getElementById('setup-overlay').style.display='flex';
+}
+
+document.addEventListener('DOMContentLoaded',()=>{
+  // Firebase setup form
+  document.getElementById('fb-save-btn').addEventListener('click', async ()=>{
+    const apiKey=document.getElementById('fb-apikey').value.trim();
+    const dburl=document.getElementById('fb-dburl').value.trim();
+    const proj=document.getElementById('fb-projectid').value.trim();
+    const pin=document.getElementById('fb-pin').value.trim();
+    if(!apiKey||!dburl||!proj){ alert('Fill in all Firebase fields.'); return; }
+    if(!/^\d{6}$/.test(pin)){ alert('PIN must be exactly 6 digits.'); return; }
+    const config={apiKey,databaseURL:dburl,projectId:proj};
+    const hashed=await hashPin(pin);
+    try{
+      await initFirebase(config);
+      // Store PIN hash in Firebase
+      await fbDb.ref('lyric-vault/config/pin').set(hashed);
+      localStorage.setItem('lv-fb-config',JSON.stringify(config));
+      localStorage.setItem('lv-pin-hash',hashed);
+      document.getElementById('setup-overlay').style.display='none';
+      alert('Firebase connected! Syncing now.');
+      syncToFirebase();
+    }catch(e){alert('Firebase connection failed: '+e.message);}
+  });
+  document.getElementById('fb-skip').addEventListener('click',()=>{ document.getElementById('setup-overlay').style.display='none'; });
+
+  // PIN form
+  setupPinInputs();
+
+  // Boot sequence
+  boot();
+});
+
+async function boot(){
+  const config=getFbConfig();
+  if(config){
+    // Show PIN screen
+    document.getElementById('pin-overlay').style.display='flex';
+    document.getElementById('pin-skip-link').addEventListener('click',()=>{
+      document.getElementById('pin-overlay').style.display='none';
+      launchApp(false);
+    });
+    document.getElementById('pin-submit').addEventListener('click', verifyPin);
+    // Try to connect Firebase in background
+    try{ await initFirebase(config); }catch(e){ console.warn('Firebase init failed',e); }
+  } else {
+    // No Firebase — go straight to app
+    launchApp(false);
+  }
+}
+
+async function verifyPin(){
+  const digits=[...document.querySelectorAll('.pin-digit')].map(d=>d.value||'0').join('');
+  if(digits.length!==6||!/^\d{6}$/.test(digits)){ document.getElementById('pin-error').textContent='Enter all 6 digits.'; return; }
+  const entered=await hashPin(digits);
+  let stored=localStorage.getItem('lv-pin-hash');
+  // Try to get from Firebase if available
+  if(fbReady && fbDb){
+    try{
+      const snap=await fbDb.ref('lyric-vault/config/pin').get();
+      if(snap.exists()) stored=snap.val();
+    }catch(e){}
+  }
+  if(!stored){
+    // First time — set PIN
+    localStorage.setItem('lv-pin-hash',entered);
+    if(fbReady&&fbDb) await fbDb.ref('lyric-vault/config/pin').set(entered).catch(()=>{});
+    document.getElementById('pin-overlay').style.display='none';
+    launchApp(true);
+    return;
+  }
+  if(entered===stored){
+    document.getElementById('pin-overlay').style.display='none';
+    launchApp(true);
+  } else {
+    document.getElementById('pin-error').textContent='Incorrect PIN. Try again.';
+    document.querySelectorAll('.pin-digit').forEach(d=>d.value='');
+    document.querySelector('.pin-digit').focus();
+  }
+}
+
+function setupPinInputs(){
+  const digits=[...document.querySelectorAll('.pin-digit')];
+  digits.forEach((d,i)=>{
+    d.addEventListener('input',()=>{
+      if(d.value.length>1) d.value=d.value.slice(-1);
+      if(d.value&&i<digits.length-1) digits[i+1].focus();
+      if(digits.every(x=>x.value)) document.getElementById('pin-submit').click();
+    });
+    d.addEventListener('keydown',ev=>{
+      if(ev.key==='Backspace'&&!d.value&&i>0) digits[i-1].focus();
+    });
+  });
+  digits[0].focus();
+}
+
+function launchApp(withSync){
+  document.getElementById('app-shell').style.display='flex';
+  updateStats();
+  buildFilterUI();
+  applyFilters();
+  renderActiveFilters();
+  // Load vault file handler
+  document.getElementById('vault-load-fi').addEventListener('change', handleVaultLoad);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FILTER STATE
+// ═══════════════════════════════════════════════════════════════
+const F={lang:new Set(),mood:new Set(),rhyme:new Set(),themeParents:new Set(),themeSubs:new Set(),annotated:false,text:''};
+
+function entryMatchesLang(e){
+  if(!F.lang.size) return true;
+  const l=e.language||'';
+  if(l==='mixed') return F.lang.has('mixed')||F.lang.has('en')||F.lang.has('pt');
+  return F.lang.has(l);
+}
+function entryMatchesTheme(e){
+  if(!F.themeParents.size&&!F.themeSubs.size) return true;
+  const ps=e.themeParents||[], ss=e.themeSubs||[];
+  for(const p of F.themeParents) if(ps.includes(p)) return true;
+  for(const s of F.themeSubs)    if(ss.includes(s)) return true;
+  return false;
+}
+
+// matchExcluding: does entry match all filters EXCEPT the given dimension?
+// Used for faceted count computation.
+function matchExcluding(e, excl){
+  if(F.text && !((e.text||'').toLowerCase().includes(F.text)||(e.annotation||'').toLowerCase().includes(F.text))) return false;
+  if(excl!=='lang'  && F.lang.size  && !entryMatchesLang(e))   return false;
+  if(excl!=='mood'  && F.mood.size  && !F.mood.has(e.mood))     return false;
+  if(excl!=='rhyme' && F.rhyme.size && !F.rhyme.has(e.rhymeGroup)) return false;
+  if(excl!=='theme' && (F.themeParents.size||F.themeSubs.size) && !entryMatchesTheme(e)) return false;
+  if(F.annotated && !(e.annotation||'').trim()) return false;
+  return true;
+}
+
+// Compute facet counts: for each dimension, count entries matching all OTHER filters.
+// This makes the sidebar reactive — selecting EN shows counts only for EN entries.
+function computeFacets(){
+  const counts={lang:{},mood:{},rhyme:{},themeParents:{},themeSubs:{}};
+  vault.forEach(e=>{
+    if(matchExcluding(e,'lang')   && e.language)    counts.lang[e.language]=(counts.lang[e.language]||0)+1;
+    if(matchExcluding(e,'mood')   && e.mood)         counts.mood[e.mood]=(counts.mood[e.mood]||0)+1;
+    if(matchExcluding(e,'rhyme')  && e.rhymeGroup)   counts.rhyme[e.rhymeGroup]=(counts.rhyme[e.rhymeGroup]||0)+1;
+    if(matchExcluding(e,'theme')){
+      (e.themeParents||[]).forEach(p=>counts.themeParents[p]=(counts.themeParents[p]||0)+1);
+      (e.themeSubs||[]).forEach(s=>counts.themeSubs[s]=(counts.themeSubs[s]||0)+1);
+    }
+  });
+  return counts;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BUILD SIDEBAR — reactive, facet-count aware
+// ═══════════════════════════════════════════════════════════════
+function buildFilterUI(){
+  const C=computeFacets(); // facet counts
+  const langLbls={en:'EN',pt:'PT',mixed:'PT+EN'};
+  const allLangs=[...new Set(vault.map(e=>e.language).filter(Boolean))].sort();
+  const allMoods=[...new Set(vault.map(e=>e.mood).filter(Boolean))].sort();
+  const curSize=parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lyric-size'))||16;
+
+  // Language buttons
+  const langBtns=allLangs.map(l=>{
+    const cnt=C.lang[l]||0;
+    return `<button class="ftag ftag-lang${F.lang.has(l)?' on':''}${cnt===0?' zero':''}" data-type="lang" data-val="${l}">${langLbls[l]||l.toUpperCase()} <span class="ftag-count">${cnt}</span></button>`;
+  }).join('');
+
+  // Mood buttons
+  const moodBtns=allMoods.map(m=>{
+    const cnt=C.mood[m]||0;
+    return `<button class="ftag ftag-mood${F.mood.has(m)?' on':''}${cnt===0?' zero':''}" data-type="mood" data-val="${m}">${m} <span class="ftag-count">${cnt}</span></button>`;
+  }).join('');
+
+  // Theme tree with facet counts
+  const activePars=ALL_PARENTS.filter(p=>(C.themeParents[p]||0)>0 || F.themeParents.has(p));
+  const themeRows=activePars.map(p=>{
+    const pCnt=C.themeParents[p]||0;
+    const pOn=F.themeParents.has(p);
+    const kids=TAXONOMY[p].filter(s=>(C.themeSubs[s]||0)>0||F.themeSubs.has(s));
+    const anyKidOn=kids.some(s=>F.themeSubs.has(s));
+    const isOpen=pOn||anyKidOn;
+    const safep=p.replace(/[^a-z0-9]/gi,'_');
+    const childRows=kids.map(s=>{
+      const sCnt=C.themeSubs[s]||0;
+      return `<div class="tsub${F.themeSubs.has(s)?' on':''}${sCnt===0?' zero':''}" data-sub="${s.replace(/[^a-z0-9]/gi,'_')}" data-par="${safep}"><span class="tsub-name">${s}</span><span class="tsub-count">${sCnt}</span></div>`;
+    }).join('');
+    return `<div class="tcat">
+      <div class="tcat-head${pOn?' on':''}${pCnt===0?' zero':''}" data-par="${safep}">
+        <span class="tcat-arrow${isOpen?' open':''}" id="arr_${safep}">▶</span>
+        <span class="tcat-name">${p}</span><span class="tcat-count">${pCnt}</span>
+      </div>
+      <div class="tcat-children${isOpen?' open':''}" id="ch_${safep}">${childRows}</div>
+    </div>`;
+  }).join('');
+
+  // Rhyme family tree — grouped by phonetic family, counts filtered
+  // Build map: family → list of rhyme endings with counts
+  const rhymeFamilyMap={};
+  RHYME_FAMILIES.forEach(f=>rhymeFamilyMap[f.id]={fam:f,endings:[]});
+  Object.keys(C.rhyme).forEach(rg=>{
+    const cnt=C.rhyme[rg]||0;
+    const fid=getRhymeFamily(rg);
+    if(rhymeFamilyMap[fid]) rhymeFamilyMap[fid].endings.push({rg,cnt});
+  });
+  // Also include currently selected rhymes even if count=0
+  F.rhyme.forEach(rg=>{
+    const fid=getRhymeFamily(rg);
+    if(rhymeFamilyMap[fid]&&!rhymeFamilyMap[fid].endings.find(x=>x.rg===rg))
+      rhymeFamilyMap[fid].endings.push({rg,cnt:0});
+  });
+
+  const rhymeRows=RHYME_FAMILIES.map(fam=>{
+    const {endings}=rhymeFamilyMap[fam.id];
+    if(!endings.length) return '';
+    endings.sort((a,b)=>b.cnt-a.cnt);
+    const famTotal=endings.reduce((s,x)=>s+x.cnt,0);
+    const famOn=endings.some(x=>F.rhyme.has(x.rg));
+    const anyOn=famOn;
+    const safefam=fam.id.replace(/[^a-z0-9]/gi,'_');
+    const endRows=endings.map(({rg,cnt})=>`
+      <div class="rend${F.rhyme.has(rg)?' on':''}${cnt===0?' zero':''}" data-rend="${rg}">
+        <span class="rend-name">∿ ${rg}</span><span class="rend-count">${cnt}</span>
+      </div>`).join('');
+    return `<div class="rfam">
+      <div class="rfam-head${famOn?' on':''}${famTotal===0?' zero':''}" data-rfam="${safefam}">
+        <span class="rfam-arrow${anyOn?' open':''}" id="rarr_${safefam}">▶</span>
+        <span class="rfam-name">${fam.label}</span><span class="rfam-count">${famTotal}</span>
+      </div>
+      <div class="rfam-children${anyOn?' open':''}" id="rch_${safefam}">${endRows}</div>
+    </div>`;
+  }).join('');
+
+  const hasAnn=vault.some(e=>(e.annotation||'').trim());
+
+  document.getElementById('sb-filters').innerHTML=`
+    <div class="fblock">
+      <div class="fblock-head"><span class="fblock-label">Text search</span></div>
+      <input class="fsearch" id="text-search" placeholder="keyword or phrase…" value="${F.text.replace(/"/g,'&quot;')}">
+    </div>
+    ${allLangs.length?`<div class="fblock">
+      <div class="fblock-head"><span class="fblock-label">Language</span><button class="fblock-clear" data-clear="lang">clear</button></div>
+      <div class="ftags">${langBtns}</div></div>`:''}
+    ${allMoods.length?`<div class="fblock">
+      <div class="fblock-head"><span class="fblock-label">Mood</span><button class="fblock-clear" data-clear="mood">clear</button></div>
+      <div class="ftags">${moodBtns}</div></div>`:''}
+    ${activePars.length?`<div class="fblock">
+      <div class="fblock-head"><span class="fblock-label">Theme</span><button class="fblock-clear" data-clear="theme">clear</button></div>
+      <div class="theme-tree">${themeRows}</div></div>`:''}
+    ${rhymeRows?`<div class="fblock">
+      <div class="fblock-head"><span class="fblock-label">Rhyme</span><button class="fblock-clear" data-clear="rhyme">clear</button></div>
+      <div>${rhymeRows}</div></div>`:''}
+    ${hasAnn?`<div class="fblock">
+      <div class="fblock-head"><span class="fblock-label">Other</span></div>
+      <div class="ftags"><button class="ftag ftag-ann${F.annotated?' on':''}" data-type="annotated">✎ annotated only</button></div></div>`:''}
+    <div class="fblock">
+      <div class="fblock-head"><span class="fblock-label">Text size</span></div>
+      <div class="size-row">
+        <span style="font-size:10px;color:var(--text3);font-family:var(--lyric)">A</span>
+        <input type="range" id="size-slider" min="13" max="24" value="${curSize}">
+        <span style="font-size:15px;color:var(--text3);font-family:var(--lyric)">A</span>
+        <span class="size-lbl" id="size-lbl">${curSize}px</span>
+      </div>
+    </div>`;
+
+  // Attach events via delegation
+  const sf=document.getElementById('sb-filters');
+  // Remove old listener by cloning (clean approach for rebuilds)
+  const sfNew=sf.cloneNode(true);
+  sf.parentNode.replaceChild(sfNew,sf);
+  sfNew.addEventListener('click', handleFilterClick);
+  sfNew.addEventListener('input', handleFilterInput);
+}
+
+function handleFilterClick(e){
+  const btn=e.target.closest('[data-type],[data-clear],[data-par],[data-sub],[data-rend],[data-rfam]');
+  if(!btn) return;
+
+  if(btn.dataset.clear){
+    const t=btn.dataset.clear;
+    if(t==='theme'){F.themeParents.clear();F.themeSubs.clear();}
+    else F[t].clear();
+    buildFilterUI(); applyFilters(); renderActiveFilters(); return;
+  }
+
+  if(btn.dataset.type){
+    const t=btn.dataset.type,v=btn.dataset.val||'';
+    if(t==='annotated'){F.annotated=!F.annotated;btn.classList.toggle('on',F.annotated);}
+    else{if(F[t].has(v))F[t].delete(v);else F[t].add(v);btn.classList.toggle('on',F[t].has(v));}
+    // Rebuild sidebar to update facet counts
+    buildFilterUI(); applyFilters(); renderActiveFilters(); return;
+  }
+
+  // Theme parent head
+  if(btn.classList.contains('tcat-head') && btn.dataset.par){
+    const safep=btn.dataset.par;
+    const pName=btn.querySelector('.tcat-name')?.textContent||'';
+    if(F.themeParents.has(pName))F.themeParents.delete(pName); else F.themeParents.add(pName);
+    buildFilterUI(); applyFilters(); renderActiveFilters(); return;
+  }
+  // Theme sub
+  if(btn.classList.contains('tsub') && btn.dataset.sub){
+    const sName=btn.querySelector('.tsub-name')?.textContent||'';
+    const safep=btn.dataset.par;
+    if(F.themeSubs.has(sName))F.themeSubs.delete(sName); else F.themeSubs.add(sName);
+    buildFilterUI(); applyFilters(); renderActiveFilters(); return;
+  }
+  // Rhyme ending
+  if(btn.classList.contains('rend') && btn.dataset.rend){
+    const rg=btn.dataset.rend;
+    if(F.rhyme.has(rg))F.rhyme.delete(rg); else F.rhyme.add(rg);
+    buildFilterUI(); applyFilters(); renderActiveFilters(); return;
+  }
+  // Rhyme family head — toggle expand only (don't filter by family directly)
+  if(btn.classList.contains('rfam-head') && btn.dataset.rfam){
+    const safef=btn.dataset.rfam;
+    const drawer=document.getElementById('rch_'+safef);
+    const arrow=document.getElementById('rarr_'+safef);
+    if(drawer){drawer.classList.toggle('open');arrow?.classList.toggle('open');}
+    return;
+  }
+  // Theme arrow / expand via tcat-head
+  const head=btn.closest('.tcat-head');
+  if(head && head.dataset.par){
+    const safep=head.dataset.par;
+    document.getElementById('ch_'+safep)?.classList.toggle('open');
+    document.getElementById('arr_'+safep)?.classList.toggle('open');
+  }
+}
+
+function handleFilterInput(e){
+  if(e.target.id==='text-search'){
+    F.text=e.target.value.toLowerCase();
+    buildFilterUI(); applyFilters(); renderActiveFilters(); return;
+  }
+  if(e.target.id==='size-slider'){
+    const v=e.target.value;
+    document.documentElement.style.setProperty('--lyric-size',v+'px');
+    const lbl=document.getElementById('size-lbl'); if(lbl) lbl.textContent=v+'px';
+    localStorage.setItem('lv-size',v);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ACTIVE FILTER CHIPS
+// ═══════════════════════════════════════════════════════════════
+const lLbls={en:'EN',pt:'PT',mixed:'PT+EN'};
+function renderActiveFilters(){
+  const chips=[];
+  F.lang.forEach(v=>chips.push({g:'lang',val:v,label:lLbls[v]||v,cls:'tag-lang-en'}));
+  F.mood.forEach(v=>chips.push({g:'mood',val:v,label:v,cls:'tag-mood'}));
+  F.themeParents.forEach(v=>chips.push({g:'themeParents',val:v,label:v,cls:'tag-theme'}));
+  F.themeSubs.forEach(v=>chips.push({g:'themeSubs',val:v,label:v,cls:'tag-theme'}));
+  F.rhyme.forEach(v=>chips.push({g:'rhyme',val:v,label:'∿ '+v,cls:'tag-rhyme'}));
+  if(F.annotated) chips.push({g:'annotated',val:'',label:'✎ annotated',cls:'tag-plain'});
+  const af=document.getElementById('active-filters');
+  if(!chips.length){af.innerHTML=`<span style="font-size:11px;color:var(--text3)">No filters — ${vault.length} entries</span>`;return;}
+  af.innerHTML=chips.map(c=>`<span class="af-chip tag ${c.cls}" data-cg="${c.g}" data-cv="${encodeURIComponent(c.val)}">${esc(c.label)}</span>`).join('')
+    +`<button style="font-size:10px;background:none;border:none;color:var(--text3);cursor:pointer;padding:2px 6px;font-family:var(--ui)" data-clearall="1">clear all</button>`;
+  af.onclick=ev=>{
+    const ch=ev.target.closest('[data-cg]');
+    if(ch){removeChip(ch.dataset.cg,decodeURIComponent(ch.dataset.cv));return;}
+    if(ev.target.dataset.clearall) clearAllFilters();
+  };
+}
+
+function removeChip(g,v){
+  if(g==='annotated')F.annotated=false;
+  else if(g==='themeParents')F.themeParents.delete(v);
+  else if(g==='themeSubs')F.themeSubs.delete(v);
+  else F[g].delete(v);
+  buildFilterUI(); applyFilters(); renderActiveFilters();
+}
+
+function clearAllFilters(){
+  F.lang.clear();F.mood.clear();F.rhyme.clear();F.themeParents.clear();F.themeSubs.clear();
+  F.annotated=false;F.text='';
+  buildFilterUI(); applyFilters(); renderActiveFilters();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// APPLY FILTERS + RENDER
+// ═══════════════════════════════════════════════════════════════
+function applyFilters(){
+  let res=vault.map((e,i)=>({e,i}));
+  if(F.text)res=res.filter(({e})=>(e.text||'').toLowerCase().includes(F.text)||(e.annotation||'').toLowerCase().includes(F.text)||(e.source||'').toLowerCase().includes(F.text));
+  if(F.lang.size)res=res.filter(({e})=>entryMatchesLang(e));
+  if(F.mood.size)res=res.filter(({e})=>F.mood.has(e.mood));
+  if(F.rhyme.size)res=res.filter(({e})=>F.rhyme.has(e.rhymeGroup));
+  if(F.themeParents.size||F.themeSubs.size)res=res.filter(({e})=>entryMatchesTheme(e));
+  if(F.annotated)res=res.filter(({e})=>(e.annotation||'').trim());
+  const sort=document.getElementById('sort-sel')?.value||'default';
+  if(sort==='source')res.sort((a,b)=>(a.e.source||'').localeCompare(b.e.source||''));
+  if(sort==='lang')res.sort((a,b)=>(a.e.language||'').localeCompare(b.e.language||''));
+  if(sort==='mood')res.sort((a,b)=>(a.e.mood||'').localeCompare(b.e.mood||''));
+  if(sort==='rhyme')res.sort((a,b)=>(a.e.rhymeGroup||'').localeCompare(b.e.rhymeGroup||''));
+  if(sort==='annotated')res.sort((a,b)=>((b.e.annotation||'').trim()?1:0)-((a.e.annotation||'').trim()?1:0));
+  document.getElementById('st-showing').textContent=res.length;
+  document.getElementById('result-count').textContent=`${res.length} / ${vault.length}`;
+  const c=document.getElementById('content');
+  if(!vault.length){c.innerHTML=`<div class="empty"><p>No lyrics yet.<br>Click <strong>↑ Import</strong> to get started.</p></div>`;return;}
+  if(!res.length){c.innerHTML=`<div class="empty"><p>No entries match the current filters.</p></div>`;return;}
+  c.innerHTML=`<div class="entries">${res.map(({e,i})=>entryCard(e,i)).join('')}</div>`;
+}
+
+function updateStats(){
+  const cats=new Set(vault.flatMap(e=>e.themeParents||[]));
+  const rg=new Set(vault.map(e=>e.rhymeGroup).filter(Boolean));
+  document.getElementById('st-entries').textContent=vault.length;
+  document.getElementById('st-cats').textContent=cats.size;
+  document.getElementById('st-rhymes').textContent=rg.size;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TAB SWITCHING
+// ═══════════════════════════════════════════════════════════════
+let currentTab='vault';
+function switchTab(tab){
+  currentTab=tab;
+  document.getElementById('tab-vault').classList.toggle('active',tab==='vault');
+  document.getElementById('tab-writing').classList.toggle('active',tab==='writing');
+  document.getElementById('view-vault').style.display=tab==='vault'?'flex':'none';
+  document.getElementById('view-writing').style.display=tab==='writing'?'flex':'none';
+  document.getElementById('view-import').style.display='none';
+  document.getElementById('sb-filters').style.opacity=tab==='vault'?'1':'0.4';
+  document.getElementById('sb-filters').style.pointerEvents=tab==='vault'?'':'none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ENTRY CARD + DETAIL PANEL
+// ═══════════════════════════════════════════════════════════════
+function langTag(lang){
+  if(!lang)return'';
+  return `<span class="tag ${lang==='en'?'tag-lang-en':lang==='pt'?'tag-lang-pt':'tag-lang-mix'}">${lang==='mixed'?'PT+EN':lang.toUpperCase()}</span>`;
+}
+
+let activeId=null;
+
+function entryCard(e,idx){
+  const preview=e.text.length>280?e.text.substring(0,280)+'…':e.text;
+  const annHtml=(e.annotation||'').trim()?`<div class="entry-ann">✎ ${esc(e.annotation.substring(0,90)+(e.annotation.length>90?'…':''))}</div>`:'';
+  const pTags=(e.themeParents||[]).slice(0,2).map(p=>`<span class="tag tag-theme">${esc(p)}</span>`).join('');
+  const tags=[langTag(e.language),e.mood?`<span class="tag tag-mood">${esc(e.mood)}</span>`:'',pTags,e.rhymeGroup?`<span class="tag tag-rhyme">∿ ${esc(e.rhymeGroup)}</span>`:''].filter(Boolean).join('');
+  const src=e.source?`<span class="entry-src" title="${esc(e.source)}">${esc(e.source)}</span>`:'';
+  return `<div class="entry${activeId===e.id?' active':''}" data-idx="${idx}">
+    <div class="entry-body">${esc(preview)}</div>${annHtml}
+    <div class="entry-foot">${tags}${src}</div>
+  </div>`;
+}
+
+document.addEventListener('click',ev=>{
+  const card=ev.target.closest('.entry[data-idx]');
+  if(card) openEntry(+card.dataset.idx);
+});
+
+function openEntry(idx){
+  const e=vault[idx]; if(!e)return;
+  activeId=e.id;
+  document.querySelectorAll('.entry[data-idx]').forEach(el=>el.classList.toggle('active',+el.dataset.idx===idx));
+  document.getElementById('panel').classList.remove('closed');
+  document.getElementById('panel-title').textContent=e.source||'Entry detail';
+  const pTags=(e.themeParents||[]).map(p=>`<span class="tag tag-theme">${esc(p)}</span>`).join('');
+  const sTags=(e.themeSubs||[]).map(s=>`<span class="tag tag-theme" style="opacity:.65">${esc(s)}</span>`).join('');
+  document.getElementById('panel-body').innerHTML=`
+    <div class="panel-sec">
+      <div class="panel-sec-lbl"><span>Lyrics</span><button class="copy-btn" id="copy-btn">⎘ Copy</button></div>
+      <div class="focus-text">${esc(e.text)}</div>
+    </div>
+    <div class="panel-sec">
+      <div class="panel-sec-lbl">Tags</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">${langTag(e.language)}${e.mood?`<span class="tag tag-mood">${esc(e.mood)}</span>`:''}${pTags}${sTags}${e.rhymeGroup?`<span class="tag tag-rhyme">∿ ${esc(e.rhymeGroup)}</span>`:''}${!e.analysed?`<span class="tag tag-plain">not analysed</span>`:''}</div>
+    </div>
+    <div class="panel-sec">
+      <div class="panel-sec-lbl">Your annotation</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px;line-height:1.5">Double meanings, personal refs, inside jokes.</div>
+      <textarea class="ann-area" id="ann-ta" placeholder="Add context…">${esc(e.annotation||'')}</textarea>
+      <button class="save-ann-btn" id="save-ann-btn">Save annotation</button>
+    </div>
+    <div class="panel-sec" id="related-sec">
+      <div class="panel-sec-lbl"><span>Related entries</span><button class="find-rel-btn" id="find-rel-btn">Find related →</button></div>
+      <p style="font-size:11.5px;color:var(--text3);margin-top:4px">Click "Find related" to search for connected entries.</p>
+    </div>`;
+
+  document.getElementById('save-ann-btn').addEventListener('click',()=>saveAnnotation(idx));
+  document.getElementById('copy-btn').addEventListener('click',function(){
+    navigator.clipboard.writeText(e.text).then(()=>{this.textContent='✓ Copied';this.classList.add('copied');setTimeout(()=>{this.textContent='⎘ Copy';this.classList.remove('copied');},2000);}).catch(()=>document.execCommand('copy'));
+  });
+  document.getElementById('find-rel-btn').addEventListener('click',function(){
+    this.disabled=true;this.textContent='Searching…';
+    document.getElementById('related-sec').innerHTML=`<div class="panel-sec-lbl">Related entries</div><div class="spinner-wrap" style="height:60px"><div class="spin"></div></div>`;
+    loadRelated(idx,e);
+  });
+}
+
+function saveAnnotation(idx){
+  const val=(document.getElementById('ann-ta')?.value||'').trim();
+  vault[idx].annotation=val; save();
+  document.querySelectorAll(`.entry[data-idx="${idx}"]`).forEach(card=>{
+    let a=card.querySelector('.entry-ann');
+    if(val){const p=val.substring(0,90)+(val.length>90?'…':'');if(a)a.innerHTML='✎ '+esc(p);else card.querySelector('.entry-body').insertAdjacentHTML('afterend',`<div class="entry-ann">✎ ${esc(p)}</div>`);}
+    else{if(a)a.remove();}
+  });
+  const btn=document.getElementById('save-ann-btn');
+  if(btn){btn.textContent='✓ Saved';setTimeout(()=>btn.textContent='Save annotation',1400);}
+}
+
+async function loadRelated(idx,e){
+  if(vault.length<2){document.getElementById('related-sec').innerHTML=`<div class="panel-sec-lbl">Related entries</div><p style="font-size:11.5px;color:var(--text3)">Need more entries.</p>`;return;}
+  try{
+    const sys=`Find most related lyric entries to the focal one. Lyrics may be English or European Portuguese.
+Return ONLY a JSON array of up to 5: [{"id":<vault_index>,"connection":"<8 words>","type":"rhyme|theme|mood|imagery"}]
+Return ONLY JSON.`;
+    const others=vault.map((v2,i)=>i!==idx?`${i}: ${v2.text.substring(0,160)}`:null).filter(Boolean).join('\n');
+    const ann=e.annotation?`\nNote: "${e.annotation}"`:'';
+    const res=await apiCall(sys,`Focal:\n"${e.text.substring(0,380)}"${ann}\n\nOthers:\n${others}`,800);
+    const related=parseJson(res)||[];
+    const tc={rhyme:'tag-rhyme',theme:'tag-theme',mood:'tag-mood',imagery:'tag-plain'};
+    const html=!related.length?`<p style="font-size:11.5px;color:var(--text3)">No strong matches found.</p>`
+      :related.map(r=>{const v2=vault[r.id];if(!v2)return'';const pv=v2.text.length>120?v2.text.substring(0,120)+'…':v2.text;return`<div class="rel-item" data-idx="${r.id}"><div class="rel-text">${esc(pv)}</div><div class="rel-meta"><span class="tag ${tc[r.type]||'tag-plain'}">${esc(r.type)}</span><span style="font-style:italic">${esc(r.connection)}</span></div></div>`;}).join('');
+    document.getElementById('related-sec').innerHTML=`<div class="panel-sec-lbl">Related entries</div>${html}`;
+    document.getElementById('related-sec').querySelectorAll('.rel-item[data-idx]').forEach(el=>el.addEventListener('click',()=>openEntry(+el.dataset.idx)));
+  }catch(err){document.getElementById('related-sec').innerHTML=`<div class="panel-sec-lbl">Related entries</div><p style="font-size:11.5px;color:var(--text3)">Couldn't load.</p>`;}
+}
+
+function closePanel(){document.getElementById('panel').classList.add('closed');activeId=null;document.querySelectorAll('.entry').forEach(el=>el.classList.remove('active'));}
+
+// ═══════════════════════════════════════════════════════════════
+// WRITING VIEW
+// ═══════════════════════════════════════════════════════════════
+function clearWriting(){
+  const ta=document.getElementById('writing-ta');if(ta)ta.value='';
+  document.getElementById('wr-body').innerHTML=`<div class="empty"><p>Write some lyrics and hit Analyse.</p></div>`;
+}
+
+async function analyseWriting(){
+  const text=(document.getElementById('writing-ta')?.value||'').trim();
+  if(!text){document.getElementById('wr-hint').textContent='Add some lyrics first.';return;}
+  if(!vault.length){document.getElementById('wr-hint').textContent='Import lyrics first.';return;}
+  const btn=document.getElementById('wr-btn');btn.disabled=true;btn.textContent='Analysing…';
+  document.getElementById('wr-body').innerHTML=`<div class="spinner-wrap" style="height:120px"><div class="spin"></div><p class="spin-label">Analysing…</p></div>`;
+  try{
+    const aSys=`Bilingual lyric analyst (English / European Portuguese). Return ONLY JSON:
+{"language":"en|pt|mixed","mood":"ONE of: Melancholic Hopeful Defiant Nostalgic Joyful Angry Longing Other","themes":["2-4 English theme labels"],"themeParents":["1-2 from: Love Identity Ambition Pain Joy Conflict Spirituality Relationships World Craft"],"rhymeEndings":["end-sounds in this text"],"summary":"one sentence"}`;
+    const aRes=await apiCall(aSys,text,600);
+    const A=parseJson(aRes)||{language:'',mood:'',themes:[],themeParents:[],rhymeEndings:[],summary:''};
+
+    const wl=(A.language||'').toLowerCase();
+    const wm=(A.mood||'').toLowerCase();
+    const wps=(A.themeParents||[]).map(x=>x.toLowerCase());
+    const wts=(A.themes||[]).map(x=>x.toLowerCase());
+    const wrs=(A.rhymeEndings||[]).map(x=>x.toLowerCase());
+
+    const scored=vault.map((e,i)=>{
+      let score=0;const reasons=[];
+      const el=(e.language||'').toLowerCase();
+      if(wl&&el){if(el===wl){score+=40;reasons.push('same language');}else if(el==='mixed'||wl==='mixed'){score+=25;reasons.push('compatible language');}}
+      const eps=(e.themeParents||[]).map(x=>x.toLowerCase());
+      const ess=(e.themeSubs||[]).map(x=>x.toLowerCase());
+      let ts=0;
+      wps.forEach(wp=>{if(eps.includes(wp)){ts+=20;reasons.push(wp);}});
+      wts.forEach(wt=>{if(ess.some(s=>s.includes(wt)||wt.includes(s)))ts+=10;});
+      if(e.themes)wts.forEach(wt=>{if(e.themes.some(t=>(t||'').toLowerCase().includes(wt)))ts+=8;});
+      score+=Math.min(ts,30);
+      const em=(e.mood||'').toLowerCase();
+      if(wm&&em){
+        if(em===wm){score+=20;reasons.push(em+' mood');}
+        else{const comp={melancholic:['longing','nostalgic'],hopeful:['joyful'],defiant:['angry'],nostalgic:['melancholic','longing'],longing:['melancholic','nostalgic']};if((comp[wm]||[]).includes(em))score+=8;}
+      }
+      const er=(e.rhymeGroup||'').toLowerCase();
+      if(er&&wrs.length){if(wrs.includes(er)){score+=10;reasons.push('∿ '+er);}}
+      return{i,e,score,reasons};
+    });
+    scored.sort((a,b)=>b.score-a.score);
+    const top=scored.slice(0,123).filter(x=>x.score>0);
+
+    function rl(s){if(s>=80)return{t:'very high',c:'tag-theme'};if(s>=55)return{t:'high',c:'tag-theme'};if(s>=35)return{t:'medium',c:'tag-mood'};return{t:'low',c:'tag-plain'};}
+
+    const insightHtml=`<div class="wr-sec"><div class="wr-sec-lbl">What you're writing</div><div class="wr-insight">${esc(A.summary||'—')}</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${langTag(A.language)}${A.mood?`<span class="tag tag-mood">${esc(A.mood)}</span>`:''}${(A.themeParents||[]).map(t=>`<span class="tag tag-theme">${esc(t)}</span>`).join('')}${(A.rhymeEndings||[]).map(r=>`<span class="tag tag-rhyme">∿ ${esc(r)}</span>`).join('')}</div></div>`;
+
+    const sugRows=top.map(({i,e,score,reasons})=>{
+      const pv=e.text.length>160?e.text.substring(0,160)+'…':e.text;
+      const r=rl(score);
+      const rs=reasons.slice(0,3).join(' · ')||'';
+      return `<div class="wr-sug">
+        <div class="wr-sug-text">${esc(pv)}</div>
+        <div class="wr-sug-meta"><span class="tag ${r.c}">${r.t}</span>${langTag(e.language)}${e.mood?`<span class="tag tag-mood">${esc(e.mood)}</span>`:''}<span class="wr-sug-why">${esc(rs)}</span><span style="margin-left:auto;font-size:9.5px;font-family:var(--mono);color:var(--text3)">${score}pt</span></div>
+        <div class="wr-sug-actions">
+          <button class="copy-btn wr-copy" data-idx="${i}" style="font-size:11px;padding:3px 9px">⎘ Copy</button>
+          <button class="find-rel-btn wr-rel" data-idx="${i}" style="font-size:11px;padding:3px 9px">Find related →</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    document.getElementById('wr-body').innerHTML=insightHtml+`<div class="wr-sec"><div class="wr-sec-lbl">From your vault — ${top.length} matches, most to least relevant</div>${sugRows}</div>`;
+
+    document.querySelectorAll('.wr-copy').forEach(b=>b.addEventListener('click',function(ev){
+      ev.stopPropagation();const e=vault[+this.dataset.idx];if(!e)return;
+      navigator.clipboard.writeText(e.text).then(()=>{this.textContent='✓ Copied';this.classList.add('copied');setTimeout(()=>{this.textContent='⎘ Copy';this.classList.remove('copied');},2000);}).catch(()=>document.execCommand('copy'));
+    }));
+    document.querySelectorAll('.wr-rel').forEach(b=>b.addEventListener('click',function(ev){
+      ev.stopPropagation();openEntry(+this.dataset.idx);
+      setTimeout(()=>{const frb=document.getElementById('find-rel-btn');if(frb)frb.click();},80);
+    }));
+    btn.textContent='Re-analyse →';
+  }catch(err){
+    document.getElementById('wr-body').innerHTML=`<p style="font-size:12px;color:var(--text3);padding:12px">Analysis failed: ${err.message}</p>`;
+    btn.textContent='Analyse →';
+  }
+  btn.disabled=false;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// IMPORT
+// ═══════════════════════════════════════════════════════════════
+let pending=[];
+
+function showImport(){
+  closePanel();
+  document.getElementById('view-vault').style.display='none';
+  document.getElementById('view-writing').style.display='none';
+  const iv=document.getElementById('view-import');
+  iv.style.display='block';
+  iv.innerHTML=`<div class="import-view">
+    <h2>Import lyrics</h2>
+    <p>Upload .txt files — one file = one entry. HTML stripped, line breaks preserved.</p>
+    <div class="igroup"><label class="ilabel">Upload .txt files</label>
+      <div class="drop-zone" id="dz"><input type="file" id="fi" accept=".txt,.html,.md" multiple>
+        <div class="dz-icon">⬆</div><div class="dz-title">Drop files here or click to browse</div>
+        <div class="dz-sub">Cmd+A to select all files at once</div></div></div>
+    <div class="or-line">or</div>
+    <div class="igroup"><label class="ilabel">Paste a single entry</label>
+      <textarea id="paste-in" placeholder="Paste lyrics here…"></textarea>
+      <div style="margin-top:6px;display:flex;gap:6px">
+        <input style="flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--rsm);padding:6px 10px;color:var(--text);font-family:var(--ui);font-size:12px;outline:none" id="paste-name" placeholder="Title (optional)">
+        <button class="btn btn-gold" id="paste-btn">Add</button>
+      </div></div>
+    <div id="import-status" style="display:none">
+      <div class="igroup"><label class="ilabel" id="status-label">Ready</label>
+        <div class="progress-bar"><div class="progress-fill" id="prog" style="width:0%"></div></div>
+        <div class="log-box" id="log-box"></div></div>
+      <div class="btn-row">
+        <button class="btn btn-gold" id="btn-analyse" style="display:none">Analyse with AI</button>
+        <button class="btn btn-ghost" id="btn-skip" style="display:none">Add without analysis</button>
+        <button class="btn btn-ghost" id="btn-done">Done</button>
+      </div></div></div>`;
+
+  document.getElementById('dz').addEventListener('click',()=>document.getElementById('fi').click());
+  document.getElementById('dz').addEventListener('dragover',ev=>{ev.preventDefault();document.getElementById('dz').classList.add('over');});
+  document.getElementById('dz').addEventListener('dragleave',()=>document.getElementById('dz').classList.remove('over'));
+  document.getElementById('dz').addEventListener('drop',ev=>{ev.preventDefault();document.getElementById('dz').classList.remove('over');handleFiles(ev.dataTransfer.files);});
+  document.getElementById('fi').addEventListener('change',()=>handleFiles(document.getElementById('fi').files));
+  document.getElementById('paste-btn').addEventListener('click',addPaste);
+  document.getElementById('btn-done').addEventListener('click',doneImport);
+  document.getElementById('btn-analyse').addEventListener('click',startAnalysis);
+  document.getElementById('btn-skip').addEventListener('click',skipAnalysis);
+}
+
+function doneImport(){document.getElementById('view-import').style.display='none';switchTab(currentTab);buildFilterUI();applyFilters();}
+
+function stripHtml(raw){
+  return raw.replace(/<br\s*\/?>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<p[^>]*>/gi,'')
+    .replace(/<\/div>/gi,'\n').replace(/<div[^>]*>/gi,'').replace(/<\/li>/gi,'\n').replace(/<li[^>]*>/gi,'')
+    .replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'")
+    .replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
+}
+
+function handleFiles(files){
+  if(!files||!files.length)return;
+  const arr=Array.from(files);
+  document.getElementById('import-status').style.display='block';
+  setLog(`Reading ${arr.length} file${arr.length>1?'s':''}…`);setProg(0);
+  pending=[];let done=0;
+  arr.forEach(f=>{
+    const r=new FileReader();
+    r.onload=ev=>{const t=stripHtml(ev.target.result||'');if(t.trim())pending.push({source:f.name.replace(/\.[^.]+$/,''),text:t.trim()});
+      done++;setProg(Math.round(done/arr.length*50));
+      if(done===arr.length){addLog(`✓ ${pending.length} ready (${arr.length-pending.length} empty skipped)`);setProg(50);document.getElementById('btn-analyse').style.display='inline-block';document.getElementById('btn-skip').style.display='inline-block';document.getElementById('status-label').textContent=`${pending.length} entries loaded`;}
+    };r.readAsText(f);
+  });
+}
+
+function addPaste(){
+  const text=stripHtml(document.getElementById('paste-in').value||'');
+  const name=(document.getElementById('paste-name').value||'').trim();
+  if(!text.trim()){alert('Nothing to add.');return;}
+  pending=[{source:name||'pasted',text:text.trim()}];
+  document.getElementById('import-status').style.display='block';
+  setLog('1 entry ready');setProg(50);
+  document.getElementById('btn-analyse').style.display='inline-block';
+  document.getElementById('btn-skip').style.display='inline-block';
+}
+
+function skipAnalysis(){
+  const items=pending.map((p,i)=>mkEntry(p,i,{}));
+  vault.push(...items);save();addLog(`✓ Added ${items.length} entries without analysis`);setProg(100);
+  document.getElementById('btn-analyse').style.display='none';document.getElementById('btn-skip').style.display='none';pending=[];
+}
+
+function mkEntry(p,i,a){return{id:Date.now()+i,source:p.source,text:p.text,annotation:'',language:a.language||'',themeParents:a.themeParents||[],themeSubs:a.themeSubs||[],mood:a.mood||'',rhymeGroup:a.rhymeGroup||'',keywords:a.keywords||[],analysed:!!a.language};}
+
+function analysisSysPrompt(){
+  const tax=Object.entries(TAXONOMY).map(([p,s])=>`${p}: ${s.join(', ')}`).join('\n');
+  return `Bilingual lyric analyst (English / European Portuguese).\nTAXONOMY:\n${tax}\n\nFor each entry return ONLY a JSON array (same order):\n[{"language":"en|pt|mixed","themeParents":["1-2 parents"],"themeSubs":["1-3 subs from those parents"],"mood":"Melancholic|Hopeful|Defiant|Nostalgic|Joyful|Angry|Longing|Other","rhymeGroup":"core end-phoneme in English e.g. ight ain ão ade","keywords":["2-4 English concepts"]}]\nAll labels in English. Return ONLY JSON array.`;
+}
+
+async function startAnalysis(){
+  if(!pending.length)return;
+  document.getElementById('btn-analyse').disabled=true;document.getElementById('btn-skip').disabled=true;
+  const total=pending.length;const B=12;addLog(`Analysing ${total} in batches of ${B}…`);
+  const items=pending.map((p,i)=>mkEntry(p,i,{}));vault.push(...items);save();
+  const si=vault.length-items.length;let done=0;
+  for(let b=0;b<items.length;b+=B){
+    const sl=items.slice(b,b+B);addLog(`→ Batch ${Math.floor(b/B)+1}/${Math.ceil(total/B)}`);
+    try{const res=await apiCall(analysisSysPrompt(),sl.map((e,i)=>`${i}:\n${e.text.substring(0,400)}`).join('\n\n---\n\n'),3000);
+      const an=parseJson(res)||[];
+      an.forEach((a,i)=>{const vi=si+b+i;if(vault[vi])Object.assign(vault[vi],{language:a.language||'',themeParents:a.themeParents||[],themeSubs:a.themeSubs||[],mood:a.mood||'',rhymeGroup:a.rhymeGroup||'',keywords:a.keywords||[],analysed:true});});
+      save();
+    }catch(e){addLog(`⚠ Batch ${Math.floor(b/B)+1} failed`);}
+    done+=sl.length;setProg(50+Math.round(done/total*50));
+  }
+  addLog(`✓ Done.`);document.getElementById('btn-analyse').style.display='none';document.getElementById('btn-skip').style.display='none';pending=[];buildFilterUI();
+}
+
+async function reanalyseAll(){
+  if(!vault.length){alert('No entries.');return;}
+  if(!confirm(`Re-analyse all ${vault.length} entries?`))return;
+  showImport();await new Promise(r=>setTimeout(r,80));
+  document.getElementById('import-status').style.display='block';
+  vault.forEach(e=>{e.language='';e.themeParents=[];e.themeSubs=[];e.mood='';e.rhymeGroup='';e.keywords=[];e.analysed=false;});save();
+  setLog(`Re-analysing ${vault.length} entries…`);setProg(0);
+  const B=12;let done=0;
+  for(let b=0;b<vault.length;b+=B){
+    const sl=vault.slice(b,b+B);addLog(`→ Batch ${Math.floor(b/B)+1}/${Math.ceil(vault.length/B)}`);
+    try{const res=await apiCall(analysisSysPrompt(),sl.map((e,i)=>`${i}:\n${e.text.substring(0,400)}`).join('\n\n---\n\n'),3000);
+      const an=parseJson(res)||[];
+      an.forEach((a,i)=>{if(vault[b+i])Object.assign(vault[b+i],{language:a.language||'',themeParents:a.themeParents||[],themeSubs:a.themeSubs||[],mood:a.mood||'',rhymeGroup:a.rhymeGroup||'',keywords:a.keywords||[],analysed:true});});
+      save();
+    }catch(e){addLog(`⚠ Batch ${Math.floor(b/B)+1} failed`);}
+    done+=sl.length;setProg(Math.round(done/vault.length*100));
+  }
+  addLog(`✓ Re-analysis complete.`);buildFilterUI();
+}
+
+function clearVault(){if(!confirm('Clear all entries?'))return;vault=[];save();buildFilterUI();applyFilters();}
+
+// ═══════════════════════════════════════════════════════════════
+// EXPORT / LOAD
+// ═══════════════════════════════════════════════════════════════
+function exportVault(){
+  if(!vault.length){alert('Nothing to export.');return;}
+  const json=JSON.stringify(vault);
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px';
+  overlay.innerHTML=`<div style="background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:22px;max-width:640px;width:100%;display:flex;flex-direction:column;gap:12px;max-height:90vh">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div><div style="font-family:var(--lyric);font-size:16px;color:var(--text)">Export vault</div><div style="font-size:11.5px;color:var(--text3);margin-top:3px">${vault.length} entries · ${(json.length/1024).toFixed(0)} KB</div></div>
+      <button id="exp-close" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;padding:4px 8px;line-height:1">×</button>
+    </div>
+    <div style="font-size:12px;color:var(--text2);line-height:1.6;background:var(--bg3);border-radius:8px;padding:10px 12px;border-left:3px solid var(--gold)">
+      <strong style="color:var(--gold)">How to save:</strong><br>
+      1. Click <strong>Copy JSON</strong><br>
+      2. Open TextEdit → Format → Make Plain Text → Paste → Save as <code style="background:var(--bg4);padding:1px 5px;border-radius:4px">lyric-vault-backup.json</code><br>
+      <em style="color:var(--text3)">Or in Terminal: <code style="background:var(--bg4);padding:1px 5px;border-radius:4px">pbpaste > ~/Desktop/lyric-vault-backup.json</code></em>
+    </div>
+    <textarea id="exp-ta" readonly style="flex:1;min-height:180px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text2);font-family:var(--mono);font-size:10px;line-height:1.5;resize:none;outline:none">${json}</textarea>
+    <div style="display:flex;gap:8px">
+      <button id="exp-copy" style="flex:1;padding:9px;background:var(--gold);color:#0c0c0d;border:none;border-radius:8px;font-family:var(--ui);font-size:13px;font-weight:500;cursor:pointer">Copy JSON</button>
+      <button id="exp-close2" style="padding:9px 16px;background:var(--bg3);color:var(--text2);border:1px solid var(--border2);border-radius:8px;font-family:var(--ui);font-size:13px;cursor:pointer">Close</button>
+    </div></div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('exp-ta').select();
+  const close=()=>document.body.removeChild(overlay);
+  document.getElementById('exp-close').onclick=close;
+  document.getElementById('exp-close2').onclick=close;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
+  document.getElementById('exp-copy').addEventListener('click',function(){
+    const ta=document.getElementById('exp-ta');ta.select();
+    navigator.clipboard.writeText(json).then(()=>{this.textContent='✓ Copied!';setTimeout(()=>this.textContent='Copy JSON',2000);}).catch(()=>{try{document.execCommand('copy');this.textContent='✓ Copied!';}catch(e){}});
+  });
+}
+
+function handleVaultLoad(){
+  const file=this.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try{
+      let raw=ev.target.result;
+      if(raw.charCodeAt(0)===0xFEFF)raw=raw.slice(1);
+      raw=raw.trim();
+      let data;
+      try{data=JSON.parse(raw);}
+      catch(pe){alert('JSON parse error: '+pe.message+'\n\nFile starts with:\n'+raw.substring(0,200));return;}
+      if(data&&!Array.isArray(data)&&Array.isArray(data.vault))data=data.vault;
+      if(!Array.isArray(data)){alert('Unexpected format. Expected an array.\n\nStarts with:\n'+raw.substring(0,200));return;}
+      const existing=new Set(vault.map(e=>String(e.id)));
+      let added=0;
+      data.forEach(e=>{
+        if(e&&(e.text||e.body)){
+          if(e.body&&!e.text)e.text=e.body;
+          if(!e.id)e.id=Date.now()+Math.random();
+          if(!existing.has(String(e.id))){vault.push(e);added++;}
+        }
+      });
+      runMigration();save();buildFilterUI();applyFilters();
+      alert(`✓ Loaded ${added} new entries (${data.length-added} duplicates skipped).`);
+      if(fbReady&&added>0)syncToFirebase();
+    }catch(err){alert('Unexpected error: '+err.message);}
+  };
+  reader.onerror=()=>alert('Could not read the file.');
+  reader.readAsText(file,'UTF-8');
+  this.value='';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════════
+function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function setLog(m){const lb=document.getElementById('log-box');if(lb)lb.innerHTML=`<div class="log-line">${m}</div>`;}
+function addLog(m){const lb=document.getElementById('log-box');if(!lb)return;lb.innerHTML+=`<div class="log-line">${m}</div>`;lb.scrollTop=lb.scrollHeight;}
+function setProg(p){const el=document.getElementById('prog');if(el)el.style.width=p+'%';}
+async function apiCall(sys,msg,maxT){
+  const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:maxT,system:sys,messages:[{role:'user',content:msg}]})});
+  const d=await r.json();return d.content?.[0]?.text||'[]';
+}
+function parseJson(raw){try{return JSON.parse(raw.replace(/```json|```/g,'').trim());}catch(e){return null;}}
+</script>
+</body>
+</html>
