@@ -356,7 +356,8 @@ textarea::placeholder{color:var(--text3);font-family:var(--ui);font-size:12.5px}
       <button class="act-btn" onclick="showImport()">↑ Import</button>
       <button class="act-btn" onclick="reanalyseAll()">⟳ Re-analyse</button>
       <button class="act-btn" style="color:var(--gold)" onclick="exportVault()">↓ Export</button>
-      <button class="act-btn" style="color:var(--gold)" onclick="document.getElementById('vault-load-fi').click()">↑ Load<input type="file" id="vault-load-fi" accept=".json" style="display:none"></button>
+      <button class="act-btn" style="color:var(--gold)" onclick="document.getElementById('vault-load-fi').click()">↑ Load file<input type="file" id="vault-load-fi" accept=".json" style="display:none"></button>
+      <button class="act-btn" style="color:var(--gold);border-color:var(--gold-border)" onclick="showPasteLoad()">⎘ Paste JSON</button>
       <button class="act-btn" onclick="showFbSetup()">⚙ Sync</button>
       <button class="act-btn" onclick="clearVault()">⊘ Clear</button>
     </div>
@@ -1390,6 +1391,70 @@ function exportVault(){
   });
 }
 
+function showPasteLoad(){
+  const o=document.createElement('div');
+  o.id='paste-load-overlay';
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  o.innerHTML=`
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:24px;max-width:580px;width:100%;display:flex;flex-direction:column;gap:14px;max-height:90vh">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div style="font-family:var(--lyric);font-size:18px;color:var(--gold)">Paste vault JSON</div>
+        <button id="plc" style="background:none;border:none;color:var(--text3);font-size:19px;cursor:pointer;padding:2px 7px;line-height:1">×</button>
+      </div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.7;background:var(--bg3);border-radius:8px;padding:10px 12px;border-left:3px solid var(--gold)">
+        Copy the JSON from the claude.ai chat export, then paste it below and click <strong style="color:var(--text)">Load</strong>.
+      </div>
+      <textarea id="paste-json-ta" style="flex:1;min-height:220px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:11px 13px;color:var(--text);font-family:var(--mono);font-size:11px;line-height:1.6;resize:vertical;outline:none;transition:border-color .15s" placeholder='Paste JSON here… starts with [{"id":...' onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border2)'"></textarea>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="pl-paste-btn" style="padding:8px 14px;background:var(--bg3);border:1px solid var(--border2);color:var(--text2);border-radius:8px;font-family:var(--ui);font-size:12.5px;cursor:pointer" title="Paste from clipboard">⎘ Paste from clipboard</button>
+        <button id="pl-load-btn" style="flex:1;padding:10px;background:var(--gold);color:#0c0c0d;border:none;border-radius:8px;font-family:var(--ui);font-size:13px;font-weight:500;cursor:pointer">Load →</button>
+      </div>
+      <div id="pl-status" style="font-size:11.5px;color:var(--text3);min-height:16px;text-align:center"></div>
+    </div>`;
+  document.body.appendChild(o);
+
+  const close=()=>o.remove();
+  document.getElementById('plc').onclick=close;
+  o.addEventListener('click',ev=>{if(ev.target===o)close();});
+
+  document.getElementById('pl-paste-btn').addEventListener('click',async()=>{
+    try{
+      const txt=await navigator.clipboard.readText();
+      document.getElementById('paste-json-ta').value=txt;
+      document.getElementById('pl-status').textContent='✓ Pasted from clipboard';
+    }catch(e){
+      document.getElementById('pl-status').textContent='Clipboard access denied — paste manually with ⌘V';
+    }
+  });
+
+  document.getElementById('pl-load-btn').addEventListener('click',()=>{
+    const raw=(document.getElementById('paste-json-ta').value||'').trim();
+    if(!raw){document.getElementById('pl-status').textContent='Nothing to load — paste some JSON first.';return;}
+    const status=document.getElementById('pl-status');
+    try{
+      let data;
+      try{data=JSON.parse(raw);}
+      catch(pe){status.textContent='JSON error: '+pe.message;return;}
+      if(data&&!Array.isArray(data)&&Array.isArray(data.vault))data=data.vault;
+      if(!Array.isArray(data)){status.textContent='Expected a JSON array — got '+typeof data+'. Check your copy.';return;}
+      const existing=new Set(vault.map(e=>String(e.id)));
+      let added=0;
+      data.forEach(e=>{
+        if(e&&(e.text||e.body)){
+          if(e.body&&!e.text)e.text=e.body;
+          if(!e.id)e.id=Date.now()+Math.random();
+          if(!existing.has(String(e.id))){vault.push(e);added++;}
+        }
+      });
+      runMigration();save();buildFilterUI();applyFilters();
+      status.style.color='rgba(106,184,160,.9)';
+      status.textContent=`✓ Loaded ${added} entries (${data.length-added} duplicates skipped)`;
+      if(fbReady&&added>0)syncToFirebase();
+      setTimeout(close,1600);
+    }catch(err){status.textContent='Unexpected error: '+err.message;}
+  });
+}
+
 function handleVaultLoad(){
   const file=this.files[0];if(!file)return;
   const reader=new FileReader();
@@ -1429,11 +1494,106 @@ function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace
 function setLog(m){const lb=document.getElementById('log-box');if(lb)lb.innerHTML=`<div class="log-line">${m}</div>`;}
 function addLog(m){const lb=document.getElementById('log-box');if(!lb)return;lb.innerHTML+=`<div class="log-line">${m}</div>`;lb.scrollTop=lb.scrollHeight;}
 function setProg(p){const el=document.getElementById('prog');if(el)el.style.width=p+'%';}
-async function apiCall(sys,msg,maxT){
-  const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:maxT,system:sys,messages:[{role:'user',content:msg}]})});
-  const d=await r.json();return d.content?.[0]?.text||'[]';
+
+// ── API ROUTING ───────────────────────────────────────────────
+// Three modes, detected automatically:
+//  1. claude.ai  → direct fetch to api.anthropic.com (no CORS issue, key injected by platform)
+//  2. localhost:3747 proxy → POST /api (proxy adds the API key server-side)
+//  3. file:// or other → show setup instructions
+
+const IS_CLAUDE_AI = location.hostname.includes('claude.ai') || location.hostname.includes('anthropic.com');
+const IS_PROXY     = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const PROXY_URL    = `${location.protocol}//${location.hostname}:3747/api`;
+
+async function apiCall(sys, msg, maxT){
+  const payload = {model:'claude-sonnet-4-20250514', max_tokens:maxT, system:sys, messages:[{role:'user',content:msg}]};
+
+  if(IS_CLAUDE_AI){
+    // Inside claude.ai — direct call works, platform handles auth
+    const r = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+    });
+    const d = await r.json(); return d.content?.[0]?.text||'[]';
+  }
+
+  if(IS_PROXY){
+    // Running via local proxy server — proxy adds the API key
+    const r = await fetch(PROXY_URL,{
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+    });
+    if(r.status===401){
+      showApiKeyPrompt();
+      throw new Error('No API key configured in proxy. Enter it in the prompt.');
+    }
+    const d = await r.json();
+    if(d.error) throw new Error(d.error);
+    return d.content?.[0]?.text||'[]';
+  }
+
+  // file:// or unknown — can't make API calls
+  showApiKeyPrompt();
+  throw new Error('API calls require the local proxy server. See setup instructions.');
 }
-function parseJson(raw){try{return JSON.parse(raw.replace(/```json|```/g,'').trim());}catch(e){return null;}}
-</script>
+
+function showApiKeyPrompt(){
+  if(document.getElementById('api-setup-overlay')) return; // already shown
+  const o = document.createElement('div');
+  o.id = 'api-setup-overlay';
+  o.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  o.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:28px;max-width:520px;width:100%;display:flex;flex-direction:column;gap:14px">
+      <div style="font-family:var(--lyric);font-size:19px;color:var(--gold)">API Setup Required</div>
+      <div style="font-size:12.5px;color:var(--text2);line-height:1.7">
+        AI features (analyse, re-analyse, find related) require the <strong style="color:var(--text)">local proxy server</strong> to forward requests to Anthropic securely.
+      </div>
+
+      <div style="background:var(--bg3);border-radius:10px;padding:14px 16px;font-size:12px;color:var(--text2);line-height:1.9;border-left:3px solid var(--gold)">
+        <strong style="color:var(--gold)">One-time setup (2 minutes):</strong><br>
+        1. Make sure <code style="background:var(--bg4);padding:1px 6px;border-radius:4px">node --version</code> works in Terminal<br>
+        2. Put <code style="background:var(--bg4);padding:1px 6px;border-radius:4px">server.js</code> and <code style="background:var(--bg4);padding:1px 6px;border-radius:4px">lyric-vault.html</code> in the same folder<br>
+        3. Double-click <code style="background:var(--bg4);padding:1px 6px;border-radius:4px">start.command</code> — or in Terminal:<br>
+        &nbsp;&nbsp;&nbsp;<code style="background:var(--bg4);padding:1px 6px;border-radius:4px">node server.js</code><br>
+        4. Open <code style="background:var(--bg4);padding:1px 6px;border-radius:4px">http://localhost:3747</code> in your browser<br>
+        5. Enter your Anthropic API key below ↓
+      </div>
+
+      ${IS_PROXY ? `
+      <div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Your Anthropic API key (sk-ant-...)</div>
+        <input id="api-key-input" type="password" placeholder="sk-ant-api03-..." style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;transition:border-color .15s" onfocus="this.style.borderColor='var(--gold)'" onblur="this.style.borderColor='var(--border2)'">
+        <div style="font-size:10.5px;color:var(--text3);margin-top:5px">Stored only on your computer, never sent anywhere except Anthropic.</div>
+      </div>
+      <button onclick="saveApiKey()" style="padding:10px;background:var(--gold);color:#0c0c0d;border:none;border-radius:8px;font-family:var(--ui);font-size:13px;font-weight:500;cursor:pointer">Save API Key & Continue</button>
+      ` : `
+      <div style="font-size:12px;color:rgba(196,123,123,.9);background:rgba(196,123,123,.07);border-radius:8px;padding:10px 12px;border:1px solid rgba(196,123,123,.2)">
+        You're opening the file directly (<code>file://</code>). Serve it via the proxy instead — open <strong>http://localhost:3747</strong> after starting the server.
+      </div>
+      `}
+      <button onclick="document.getElementById('api-setup-overlay').remove()" style="padding:8px;background:none;border:1px solid var(--border2);border-radius:8px;font-family:var(--ui);font-size:12px;color:var(--text3);cursor:pointer">Dismiss (AI features unavailable)</button>
+    </div>`;
+  document.body.appendChild(o);
+}
+
+async function saveApiKey(){
+  const key = (document.getElementById('api-key-input')?.value||'').trim();
+  if(!key.startsWith('sk-ant-')){ alert('That doesn\'t look like a valid Anthropic key (should start with sk-ant-).'); return; }
+  try{
+    const r = await fetch(`${location.protocol}//${location.hostname}:3747/set-key`,{
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key})
+    });
+    const d = await r.json();
+    if(d.ok){ document.getElementById('api-setup-overlay')?.remove(); alert('✓ API key saved. AI features are now active.'); }
+    else{ alert('Failed to save key: '+(d.error||'unknown error')); }
+  }catch(e){ alert('Could not reach the proxy server. Make sure server.js is running.'); }
+}
+
+// On load, if running via proxy, silently check if key is already set
+if(IS_PROXY){
+  fetch(`${location.protocol}//${location.hostname}:3747/has-key`).then(r=>r.json()).then(d=>{
+    if(!d.hasKey) showApiKeyPrompt();
+  }).catch(()=>{}); // proxy not running — will show error when they try to use AI features
+}
+
+function parseJson(raw){try{return JSON.parse(raw.replace(/```json|```/g,'').trim());}catch(e){return null;}}</script>
 </body>
 </html>
