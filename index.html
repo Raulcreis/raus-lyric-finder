@@ -618,8 +618,8 @@ document.addEventListener('DOMContentLoaded',()=>{
     const dburl=document.getElementById('fb-dburl').value.trim();
     const proj=document.getElementById('fb-projectid').value.trim();
     const pin=document.getElementById('fb-pin').value.trim();
-    if(!apiKey||!dburl||!proj){ alert('Fill in all Firebase fields.'); return; }
-    if(!/^\d{6}$/.test(pin)){ alert('PIN must be exactly 6 digits.'); return; }
+    if(!apiKey||!dburl||!proj){ showNotice('Fill in all Firebase fields.'); return; }
+    if(!/^\d{6}$/.test(pin)){ showNotice('PIN must be exactly 6 digits.'); return; }
     const config={apiKey,databaseURL:dburl,projectId:proj};
     const hashed=await hashPin(pin);
     try{
@@ -629,9 +629,9 @@ document.addEventListener('DOMContentLoaded',()=>{
       localStorage.setItem('lv-fb-config',JSON.stringify(config));
       localStorage.setItem('lv-pin-hash',hashed);
       document.getElementById('setup-overlay').style.display='none';
-      alert('Firebase connected! Syncing now.');
+      showNotice('✓ Firebase connected. Syncing now.');
       syncToFirebase();
-    }catch(e){alert('Firebase connection failed: '+e.message);}
+    }catch(e){ showNotice('Firebase connection failed:<br>'+e.message); }
   });
   document.getElementById('fb-skip').addEventListener('click',()=>{ document.getElementById('setup-overlay').style.display='none'; });
 
@@ -1294,7 +1294,7 @@ function handleFiles(files){
 function addPaste(){
   const text=stripHtml(document.getElementById('paste-in').value||'');
   const name=(document.getElementById('paste-name').value||'').trim();
-  if(!text.trim()){alert('Nothing to add.');return;}
+  if(!text.trim()){showNotice('Nothing to add — paste some lyrics first.');return;}
   pending=[{source:name||'pasted',text:text.trim()}];
   document.getElementById('import-status').style.display='block';
   setLog('1 entry ready');setProg(50);
@@ -1334,32 +1334,202 @@ async function startAnalysis(){
 }
 
 async function reanalyseAll(){
-  if(!vault.length){alert('No entries.');return;}
-  if(!confirm(`Re-analyse all ${vault.length} entries?`))return;
-  showImport();await new Promise(r=>setTimeout(r,80));
+  if(!vault.length){ showNotice('No entries to re-analyse.'); return; }
+
+  const o=document.createElement('div');
+  o.id='reanalyse-dlg';
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  o.innerHTML=`
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:26px;max-width:460px;width:100%;display:flex;flex-direction:column;gap:16px">
+      <div style="font-family:var(--lyric);font-size:17px;color:var(--gold)">Re-analyse ${vault.length} entries</div>
+      <div style="font-size:12.5px;color:var(--text2);line-height:1.65">Existing tags will be overwritten. Annotations are kept.<br>Choose how to run the analysis:</div>
+      <div id="opt-chat" style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:14px 16px;cursor:pointer;transition:all .15s">
+        <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:5px">💬 Via this chat (free)</div>
+        <div style="font-size:12px;color:var(--text3);line-height:1.6">Exports your lyrics as a prompt. Paste into claude.ai chat, get back a JSON array, then use <strong style="color:var(--text2)">⎘ Paste JSON</strong> to load it.</div>
+      </div>
+      <div id="opt-api" style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:14px 16px;cursor:pointer;transition:all .15s">
+        <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:5px">⚡ Via local API (automatic)</div>
+        <div style="font-size:12px;color:var(--text3);line-height:1.6">Requires the proxy server running at localhost:3747. Analyses everything automatically in batches.</div>
+      </div>
+      <button id="reanalyse-cancel" style="padding:8px;background:none;border:1px solid var(--border2);border-radius:8px;font-family:var(--ui);font-size:12.5px;color:var(--text3);cursor:pointer">Cancel</button>
+    </div>`;
+  document.body.appendChild(o);
+  const close=()=>o.remove();
+  document.getElementById('reanalyse-cancel').addEventListener('click', close);
+  o.addEventListener('click', ev=>{ if(ev.target===o) close(); });
+
+  ['opt-chat','opt-api'].forEach(id=>{
+    const el=document.getElementById(id);
+    el.addEventListener('mouseenter',()=>{ el.style.borderColor='var(--gold-border)'; el.style.background='var(--bg4)'; });
+    el.addEventListener('mouseleave',()=>{ el.style.borderColor='var(--border2)'; el.style.background='var(--bg3)'; });
+  });
+
+  document.getElementById('opt-chat').addEventListener('click',()=>{ close(); exportForChatAnalysis(); });
+  document.getElementById('opt-api').addEventListener('click',()=>{ close(); runReanalyseViaApi(); });
+}
+
+function exportForChatAnalysis(){
+  const BATCH_SIZE = 50; // keep prompt size manageable; user can run multiple times for large vaults
+  const toExport = vault.filter(e => !e.analysed).length > 0
+    ? vault.filter(e => !e.analysed)   // prefer unanalysed entries first
+    : vault;                            // if all done, export everything for a full re-run
+  const limited = toExport.slice(0, BATCH_SIZE);
+  const isPartial = limited.length < vault.length;
+
+  const taxonomy = Object.entries({
+    'Love':['Romantic love','Self-love','Motherly love','Heartbreak','Longing','Passion','Obsession','Unrequited love'],
+    'Identity':['Self-image','Confidence','Vulnerability','Growth','Purpose','Heritage','Masculinity / Femininity'],
+    'Ambition':['Success','Money','Hustle','Fame','Legacy','Competition','Goals'],
+    'Pain':['Loss','Grief','Betrayal','Struggle','Trauma','Loneliness','Addiction'],
+    'Joy':['Celebration','Gratitude','Freedom','Euphoria','Nostalgia','Fun'],
+    'Conflict':['Anger','Revenge','Enemies','Street life','Power','War','Justice'],
+    'Spirituality':['Faith','God','The universe','Death','Karma','Soul','Dreams'],
+    'Relationships':['Friendship','Family','Loyalty','Trust','Toxic relationships','Community'],
+    'World':['Politics','Society','Inequality','Nature','Time','Change'],
+    'Craft':['Wordplay','Music','Art','Creativity','Storytelling']
+  }).map(([p,s])=>`${p}: ${s.join(', ')}`).join('\n');
+
+  const entriesText = limited.map((e,i) => {
+    const realIdx = vault.indexOf(e);
+    return `[${realIdx}]\n${e.text.substring(0,400)}`;
+  }).join('\n\n---\n\n');
+
+  const prompt =
+`Analyse the following ${limited.length} lyric entries (English / European Portuguese / mixed).
+
+TAXONOMY:
+${taxonomy}
+
+For EACH entry return a JSON array (same order as input):
+[{
+  "vaultIndex": <the number in brackets before each entry>,
+  "language": "en" | "pt" | "mixed",
+  "themeParents": ["1-2 parent categories"],
+  "themeSubs": ["1-3 sub-themes from those parents"],
+  "mood": "Melancholic" | "Hopeful" | "Defiant" | "Nostalgic" | "Joyful" | "Angry" | "Longing" | "Other",
+  "rhymeGroup": "core end-phoneme in English e.g. ight ain ão ade",
+  "keywords": ["2-4 English concepts"]
+}]
+
+All labels must be in English. Return ONLY the JSON array, nothing else.
+
+ENTRIES:
+${entriesText}`;
+
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  o.innerHTML=`
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:24px;max-width:620px;width:100%;display:flex;flex-direction:column;gap:14px;max-height:90vh">
+      <div style="font-family:var(--lyric);font-size:17px;color:var(--gold)">Chat analysis prompt</div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.7;background:var(--bg3);border-radius:8px;padding:10px 12px;border-left:3px solid var(--gold)">
+        ${isPartial ? `<strong style="color:var(--gold)">Note:</strong> Exporting ${limited.length} of ${vault.length} entries (unanalysed first). Run again after loading to do the rest.<br>` : ''}
+        <strong style="color:var(--text)">Steps:</strong> 1. Copy prompt → 2. Paste into the claude.ai chat and send → 3. Copy the returned JSON → 4. Click <strong>⎘ Paste JSON</strong> in the sidebar
+      </div>
+      <textarea readonly id="chat-export-ta" style="flex:1;min-height:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text2);font-family:var(--mono);font-size:10px;line-height:1.6;resize:vertical;outline:none"></textarea>
+      <div style="display:flex;gap:8px">
+        <button id="chat-copy-btn" style="flex:1;padding:10px;background:var(--gold);color:#0c0c0d;border:none;border-radius:8px;font-family:var(--ui);font-size:13px;font-weight:500;cursor:pointer">Copy prompt</button>
+        <button id="chat-close-btn" style="padding:10px 16px;background:var(--bg3);color:var(--text2);border:1px solid var(--border2);border-radius:8px;font-family:var(--ui);font-size:13px;cursor:pointer">Close</button>
+      </div>
+      <div id="chat-copy-status" style="font-size:11.5px;color:var(--text3);text-align:center;min-height:16px"></div>
+    </div>`;
+  document.body.appendChild(o);
+
+  // Set textarea value directly (avoids HTML encoding issues)
+  document.getElementById('chat-export-ta').value = prompt;
+
+  const close2=()=>o.remove();
+  document.getElementById('chat-close-btn').addEventListener('click', close2);
+  o.addEventListener('click', ev=>{ if(ev.target===o) close2(); });
+  document.getElementById('chat-copy-btn').addEventListener('click', function(){
+    navigator.clipboard.writeText(prompt).then(()=>{
+      this.textContent='✓ Copied!';
+      document.getElementById('chat-copy-status').textContent='Now paste into the claude.ai chat window and send.';
+      setTimeout(()=>{ this.textContent='Copy prompt'; },2500);
+    }).catch(()=>{
+      const ta=document.getElementById('chat-export-ta');
+      ta.select(); document.execCommand('copy');
+      this.textContent='✓ Copied!';
+    });
+  });
+}
+
+// Also hook into the ⎘ Paste JSON flow to handle vaultIndex merging
+// When Claude returns analysis via chat, entries have a vaultIndex field.
+// The existing pasteLoad function needs to detect and apply this format.
+const _originalPasteLoad = window._pasteLoadHandler; // reference handled inline in showPasteLoad
+
+async function runReanalyseViaApi(){
+  showImport(); await new Promise(r=>setTimeout(r,80));
   document.getElementById('import-status').style.display='block';
-  vault.forEach(e=>{e.language='';e.themeParents=[];e.themeSubs=[];e.mood='';e.rhymeGroup='';e.keywords=[];e.analysed=false;});save();
-  setLog(`Re-analysing ${vault.length} entries…`);setProg(0);
-  const B=12;let done=0;
+  vault.forEach(e=>{e.language='';e.themeParents=[];e.themeSubs=[];e.mood='';e.rhymeGroup='';e.keywords=[];e.analysed=false;}); save();
+  setLog(`Re-analysing ${vault.length} entries…`); setProg(0);
+  const B=12; let done=0;
   for(let b=0;b<vault.length;b+=B){
-    const sl=vault.slice(b,b+B);addLog(`→ Batch ${Math.floor(b/B)+1}/${Math.ceil(vault.length/B)}`);
-    try{const res=await apiCall(analysisSysPrompt(),sl.map((e,i)=>`${i}:\n${e.text.substring(0,400)}`).join('\n\n---\n\n'),3000);
+    const sl=vault.slice(b,b+B); addLog(`→ Batch ${Math.floor(b/B)+1}/${Math.ceil(vault.length/B)}`);
+    try{
+      const res=await apiCall(analysisSysPrompt(),sl.map((e,i)=>`${i}:\n${e.text.substring(0,400)}`).join('\n\n---\n\n'),3000);
       const an=parseJson(res)||[];
       an.forEach((a,i)=>{if(vault[b+i])Object.assign(vault[b+i],{language:a.language||'',themeParents:a.themeParents||[],themeSubs:a.themeSubs||[],mood:a.mood||'',rhymeGroup:a.rhymeGroup||'',keywords:a.keywords||[],analysed:true});});
       save();
-    }catch(e){addLog(`⚠ Batch ${Math.floor(b/B)+1} failed`);}
-    done+=sl.length;setProg(Math.round(done/vault.length*100));
+    }catch(e){ addLog(`⚠ Batch ${Math.floor(b/B)+1} failed — try via chat instead`); }
+    done+=sl.length; setProg(Math.round(done/vault.length*100));
   }
-  addLog(`✓ Re-analysis complete.`);buildFilterUI();
+  addLog(`✓ Re-analysis complete.`); buildFilterUI();
 }
 
-function clearVault(){if(!confirm('Clear all entries?'))return;vault=[];save();buildFilterUI();applyFilters();}
+function clearVault(){
+  showConfirm(
+    'Clear vault?',
+    'All entries will be permanently deleted. Annotations and tags will be lost. This cannot be undone.',
+    'Clear all →',
+    () => { vault=[]; save(); buildFilterUI(); applyFilters(); },
+    true // danger style
+  );
+}
+
+// ── In-UI confirm / notice dialogs ────────────────────────────
+function showConfirm(title, body, confirmLabel, onConfirm, danger=false){
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  const accentColor = danger ? 'rgba(196,123,123,.9)' : 'var(--gold)';
+  const btnBg       = danger ? 'rgba(196,123,123,.15)' : 'var(--gold)';
+  const btnColor    = danger ? 'rgba(196,123,123,.9)'  : '#0c0c0d';
+  const btnBorder   = danger ? '1px solid rgba(196,123,123,.35)' : 'none';
+  o.innerHTML=`
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:26px;max-width:400px;width:100%;display:flex;flex-direction:column;gap:14px">
+      <div style="font-family:var(--lyric);font-size:17px;color:${accentColor}">${title}</div>
+      <div style="font-size:12.5px;color:var(--text2);line-height:1.65">${body}</div>
+      <div style="display:flex;gap:8px;margin-top:2px">
+        <button id="dlg-cancel" style="flex:1;padding:9px;background:none;border:1px solid var(--border2);border-radius:8px;font-family:var(--ui);font-size:12.5px;color:var(--text3);cursor:pointer">Cancel</button>
+        <button id="dlg-confirm" style="flex:1;padding:9px;background:${btnBg};border:${btnBorder};border-radius:8px;font-family:var(--ui);font-size:12.5px;font-weight:500;color:${btnColor};cursor:pointer">${confirmLabel}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(o);
+  const close=()=>o.remove();
+  document.getElementById('dlg-cancel').addEventListener('click', close);
+  o.addEventListener('click', ev=>{ if(ev.target===o) close(); });
+  document.getElementById('dlg-confirm').addEventListener('click', ()=>{ close(); onConfirm(); });
+}
+
+function showNotice(msg){
+  const o=document.createElement('div');
+  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  o.innerHTML=`
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:22px 26px;max-width:340px;width:100%;display:flex;flex-direction:column;gap:14px;text-align:center">
+      <div style="font-size:13px;color:var(--text2);line-height:1.6">${msg}</div>
+      <button id="notice-ok" style="padding:8px 20px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;font-family:var(--ui);font-size:12.5px;color:var(--text2);cursor:pointer">OK</button>
+    </div>`;
+  document.body.appendChild(o);
+  const close=()=>o.remove();
+  document.getElementById('notice-ok').addEventListener('click', close);
+  o.addEventListener('click', ev=>{ if(ev.target===o) close(); });
+}
 
 // ═══════════════════════════════════════════════════════════════
 // EXPORT / LOAD
 // ═══════════════════════════════════════════════════════════════
 function exportVault(){
-  if(!vault.length){alert('Nothing to export.');return;}
+  if(!vault.length){ showNotice('Nothing to export — your vault is empty.'); return; }
   const json=JSON.stringify(vault);
   const overlay=document.createElement('div');
   overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px';
@@ -1437,20 +1607,50 @@ function showPasteLoad(){
       catch(pe){status.textContent='JSON error: '+pe.message;return;}
       if(data&&!Array.isArray(data)&&Array.isArray(data.vault))data=data.vault;
       if(!Array.isArray(data)){status.textContent='Expected a JSON array — got '+typeof data+'. Check your copy.';return;}
-      const existing=new Set(vault.map(e=>String(e.id)));
-      let added=0;
-      data.forEach(e=>{
-        if(e&&(e.text||e.body)){
-          if(e.body&&!e.text)e.text=e.body;
-          if(!e.id)e.id=Date.now()+Math.random();
-          if(!existing.has(String(e.id))){vault.push(e);added++;}
-        }
-      });
-      runMigration();save();buildFilterUI();applyFilters();
-      status.style.color='rgba(106,184,160,.9)';
-      status.textContent=`✓ Loaded ${added} entries (${data.length-added} duplicates skipped)`;
-      if(fbReady&&added>0)syncToFirebase();
-      setTimeout(close,1600);
+
+      // Detect format: analysis result (has vaultIndex) vs full vault entries (has text/id)
+      const isAnalysis = data.length > 0 && data[0].vaultIndex !== undefined;
+
+      if(isAnalysis){
+        // Apply analysis tags back to vault by vaultIndex
+        let applied=0;
+        data.forEach(a=>{
+          const idx=a.vaultIndex;
+          if(idx!==undefined && vault[idx]){
+            Object.assign(vault[idx],{
+              language:a.language||vault[idx].language||'',
+              themeParents:a.themeParents||vault[idx].themeParents||[],
+              themeSubs:a.themeSubs||vault[idx].themeSubs||[],
+              mood:a.mood||vault[idx].mood||'',
+              rhymeGroup:a.rhymeGroup||vault[idx].rhymeGroup||'',
+              keywords:a.keywords||vault[idx].keywords||[],
+              analysed:true
+            });
+            applied++;
+          }
+        });
+        runMigration();save();buildFilterUI();applyFilters();
+        status.style.color='rgba(106,184,160,.9)';
+        status.textContent=`✓ Applied analysis to ${applied} entries`;
+        if(fbReady&&applied>0)syncToFirebase();
+        setTimeout(close,1600);
+      } else {
+        // Full vault import (existing entries with text/id)
+        const existing=new Set(vault.map(e=>String(e.id)));
+        let added=0;
+        data.forEach(e=>{
+          if(e&&(e.text||e.body)){
+            if(e.body&&!e.text)e.text=e.body;
+            if(!e.id)e.id=Date.now()+Math.random();
+            if(!existing.has(String(e.id))){vault.push(e);added++;}
+          }
+        });
+        runMigration();save();buildFilterUI();applyFilters();
+        status.style.color='rgba(106,184,160,.9)';
+        status.textContent=`✓ Loaded ${added} entries (${data.length-added} duplicates skipped)`;
+        if(fbReady&&added>0)syncToFirebase();
+        setTimeout(close,1600);
+      }
     }catch(err){status.textContent='Unexpected error: '+err.message;}
   });
 }
@@ -1465,9 +1665,9 @@ function handleVaultLoad(){
       raw=raw.trim();
       let data;
       try{data=JSON.parse(raw);}
-      catch(pe){alert('JSON parse error: '+pe.message+'\n\nFile starts with:\n'+raw.substring(0,200));return;}
+      catch(pe){ showNotice('JSON parse error: '+pe.message+'<br><br><small style="font-family:var(--mono)">File starts with:<br>'+esc(raw.substring(0,120))+'</small>'); return; }
       if(data&&!Array.isArray(data)&&Array.isArray(data.vault))data=data.vault;
-      if(!Array.isArray(data)){alert('Unexpected format. Expected an array.\n\nStarts with:\n'+raw.substring(0,200));return;}
+      if(!Array.isArray(data)){ showNotice('Unexpected format — expected a JSON array but got: '+typeof data); return; }
       const existing=new Set(vault.map(e=>String(e.id)));
       let added=0;
       data.forEach(e=>{
@@ -1478,11 +1678,11 @@ function handleVaultLoad(){
         }
       });
       runMigration();save();buildFilterUI();applyFilters();
-      alert(`✓ Loaded ${added} new entries (${data.length-added} duplicates skipped).`);
+      showNotice(`✓ Loaded ${added} new entries (${data.length-added} duplicates skipped).`);
       if(fbReady&&added>0)syncToFirebase();
-    }catch(err){alert('Unexpected error: '+err.message);}
+    }catch(err){ showNotice('Unexpected error: '+err.message); }
   };
-  reader.onerror=()=>alert('Could not read the file.');
+  reader.onerror=()=>showNotice('Could not read the file. Try again.');
   reader.readAsText(file,'UTF-8');
   this.value='';
 }
@@ -1576,15 +1776,15 @@ function showApiKeyPrompt(){
 
 async function saveApiKey(){
   const key = (document.getElementById('api-key-input')?.value||'').trim();
-  if(!key.startsWith('sk-ant-')){ alert('That doesn\'t look like a valid Anthropic key (should start with sk-ant-).'); return; }
+  if(!key.startsWith('sk-ant-')){ showNotice("That doesn't look like a valid Anthropic key (should start with sk-ant-)."); return; }
   try{
     const r = await fetch(`${location.protocol}//${location.hostname}:3747/set-key`,{
       method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key})
     });
     const d = await r.json();
-    if(d.ok){ document.getElementById('api-setup-overlay')?.remove(); alert('✓ API key saved. AI features are now active.'); }
-    else{ alert('Failed to save key: '+(d.error||'unknown error')); }
-  }catch(e){ alert('Could not reach the proxy server. Make sure server.js is running.'); }
+    if(d.ok){ document.getElementById('api-setup-overlay')?.remove(); showNotice('✓ API key saved. AI features are now active.'); }
+    else{ showNotice('Failed to save key: '+(d.error||'unknown error')); }
+  }catch(e){ showNotice('Could not reach the proxy server. Make sure server.js is running.'); }
 }
 
 // On load, if running via proxy, silently check if key is already set
