@@ -1308,173 +1308,265 @@ function skipAnalysis(){
   document.getElementById('btn-analyse').style.display='none';document.getElementById('btn-skip').style.display='none';pending=[];
 }
 
-function mkEntry(p,i,a){return{id:Date.now()+i,source:p.source,text:p.text,annotation:'',language:a.language||'',themeParents:a.themeParents||[],themeSubs:a.themeSubs||[],mood:a.mood||'',rhymeGroup:a.rhymeGroup||'',keywords:a.keywords||[],analysed:!!a.language};}
+function mkEntry(p,i,a){return{id:Date.now()+i,source:p.source,text:p.text,annotation:'',language:a.language||'',themeParents:a.themeParents||[],themeSubs:a.themeSubs||[],mood:a.mood||'',rhymeGroup:a.rhymeGroup||'',keywords:a.keywords||[],analysed:!!a.language,analysedAt:a.language?Date.now():null};}
 
 function analysisSysPrompt(){
   const tax=Object.entries(TAXONOMY).map(([p,s])=>`${p}: ${s.join(', ')}`).join('\n');
   return `Bilingual lyric analyst (English / European Portuguese).\nTAXONOMY:\n${tax}\n\nFor each entry return ONLY a JSON array (same order):\n[{"language":"en|pt|mixed","themeParents":["1-2 parents"],"themeSubs":["1-3 subs from those parents"],"mood":"Melancholic|Hopeful|Defiant|Nostalgic|Joyful|Angry|Longing|Other","rhymeGroup":"core end-phoneme in English e.g. ight ain ão ade","keywords":["2-4 English concepts"]}]\nAll labels in English. Return ONLY JSON array.`;
 }
 
+// Timeout via Promise.race — no AbortController (blocked in claude.ai iframe sandbox)
+function fetchWithTimeout(url, opts, ms){
+  const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('Request timed out')),ms));
+  return Promise.race([fetch(url, opts), timeout]);
+}
+
+async function apiCallWithRetry(sys, msg, maxT, {timeoutMs=40000, retries=3}={}){
+  const payload={model:'claude-sonnet-4-20250514',max_tokens:maxT,system:sys,messages:[{role:'user',content:msg}]};
+  const opts={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)};
+
+  for(let attempt=0; attempt<=retries; attempt++){
+    try{
+      let res;
+      try{
+        res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', opts, timeoutMs);
+      } catch(fetchErr){
+        if(IS_PROXY){
+          res = await fetchWithTimeout(PROXY_URL, opts, timeoutMs);
+          if(res.status===401){ showApiKeyPrompt(); throw new Error('No API key'); }
+        } else { throw fetchErr; }
+      }
+
+      // Rate limited — back off and retry without counting as a failed attempt
+      if(res.status===429){
+        const wait = Math.min(20000 * Math.pow(2, attempt), 120000);
+        addLog(`  ⏳ Rate limited — waiting ${Math.round(wait/1000)}s…`);
+        await new Promise(r=>setTimeout(r,wait));
+        continue; // retry same attempt index
+      }
+
+      const d = await res.json();
+      if(d.error){
+        // Overloaded errors are also retryable
+        const msg2 = d.error.message||JSON.stringify(d.error);
+        if(msg2.toLowerCase().includes('overload')||msg2.toLowerCase().includes('529')){
+          const wait = Math.min(15000 * (attempt+1), 90000);
+          addLog(`  ⏳ Server overloaded — waiting ${Math.round(wait/1000)}s…`);
+          await new Promise(r=>setTimeout(r,wait));
+          continue;
+        }
+        throw new Error(msg2);
+      }
+      return d.content?.[0]?.text||'[]';
+    } catch(err){
+      const isLast = attempt>=retries;
+      if(isLast) throw err;
+      const wait = Math.min(4000*(attempt+1), 20000);
+      addLog(`  ↻ ${err.message.includes('timed out')?'Timeout':'Error'} — retrying in ${Math.round(wait/1000)}s… (${attempt+2}/${retries+1})`);
+      await new Promise(r=>setTimeout(r,wait));
+    }
+  }
+}
+
 async function startAnalysis(){
   if(!pending.length)return;
-  document.getElementById('btn-analyse').disabled=true;document.getElementById('btn-skip').disabled=true;
-  const total=pending.length;const B=12;addLog(`Analysing ${total} in batches of ${B}…`);
-  const items=pending.map((p,i)=>mkEntry(p,i,{}));vault.push(...items);save();
-  const si=vault.length-items.length;let done=0;
+  document.getElementById('btn-analyse').disabled=true;
+  document.getElementById('btn-skip').disabled=true;
+  const total=pending.length;
+  const B=8;
+  addLog(`Analysing ${total} entries in batches of ${B}…`);
+
+  // Add progress bar above log
+  const statusEl=document.getElementById('status-label');
+  if(statusEl) statusEl.innerHTML=`Analysing… <span id="batch-counter">0 / ${total}</span>`;
+  ensureProgressBar();
+
+  const items=pending.map((p,i)=>mkEntry(p,i,{}));
+  vault.push(...items); save();
+  const si=vault.length-items.length;
+  let done=0, failed=0;
+
   for(let b=0;b<items.length;b+=B){
-    const sl=items.slice(b,b+B);addLog(`→ Batch ${Math.floor(b/B)+1}/${Math.ceil(total/B)}`);
-    try{const res=await apiCall(analysisSysPrompt(),sl.map((e,i)=>`${i}:\n${e.text.substring(0,400)}`).join('\n\n---\n\n'),3000);
+    const sl=items.slice(b,b+B);
+    const bNum=Math.floor(b/B)+1, bTotal=Math.ceil(items.length/B);
+    addLog(`→ Batch ${bNum}/${bTotal}`);
+    try{
+      const res=await apiCallWithRetry(analysisSysPrompt(),sl.map((e,i)=>`${i}:\n${e.text.substring(0,350)}`).join('\n\n---\n\n'),2500,{timeoutMs:40000,retries:3});
       const an=parseJson(res)||[];
-      an.forEach((a,i)=>{const vi=si+b+i;if(vault[vi])Object.assign(vault[vi],{language:a.language||'',themeParents:a.themeParents||[],themeSubs:a.themeSubs||[],mood:a.mood||'',rhymeGroup:a.rhymeGroup||'',keywords:a.keywords||[],analysed:true});});
+      an.forEach((a,i)=>{const vi=si+b+i;if(vault[vi])Object.assign(vault[vi],{language:a.language||'',themeParents:a.themeParents||[],themeSubs:a.themeSubs||[],mood:a.mood||'',rhymeGroup:a.rhymeGroup||'',keywords:a.keywords||[],analysed:true,analysedAt:Date.now()});});
       save();
-    }catch(e){addLog(`⚠ Batch ${Math.floor(b/B)+1} failed`);}
-    done+=sl.length;setProg(50+Math.round(done/total*50));
+      addLog(`  ✓ Batch ${bNum} done`);
+    }catch(err){
+      failed++;
+      addLog(`  ✗ Batch ${bNum} failed: ${err.message}`);
+    }
+    done+=sl.length;
+    setProg(50+Math.round(done/items.length*50));
+    updateBatchCounter(done, total);
+    if(b+B<items.length) await new Promise(r=>setTimeout(r,8000));
   }
-  addLog(`✓ Done.`);document.getElementById('btn-analyse').style.display='none';document.getElementById('btn-skip').style.display='none';pending=[];buildFilterUI();
+
+  if(failed>0) addLog(`⚠ ${failed} batch(es) failed — re-run to retry.`);
+  else addLog(`✓ Done — all entries analysed.`);
+  document.getElementById('btn-analyse').style.display='none';
+  document.getElementById('btn-skip').style.display='none';
+  pending=[];
+  buildFilterUI();
 }
 
 async function reanalyseAll(){
   if(!vault.length){ showNotice('No entries to re-analyse.'); return; }
 
+  const DAY = 24*60*60*1000;
+  const now = Date.now();
+  const neverDone  = vault.filter(e=>!e.analysed||!e.analysedAt).length;
+  const stale      = vault.filter(e=>e.analysed&&e.analysedAt&&(now-e.analysedAt)>DAY).length;
+  const fresh      = vault.length - neverDone - stale;
+
+  // Build a choice dialog
   const o=document.createElement('div');
-  o.id='reanalyse-dlg';
   o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
   o.innerHTML=`
-    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:26px;max-width:460px;width:100%;display:flex;flex-direction:column;gap:16px">
-      <div style="font-family:var(--lyric);font-size:17px;color:var(--gold)">Re-analyse ${vault.length} entries</div>
-      <div style="font-size:12.5px;color:var(--text2);line-height:1.65">Existing tags will be overwritten. Annotations are kept.<br>Choose how to run the analysis:</div>
-      <div id="opt-chat" style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:14px 16px;cursor:pointer;transition:all .15s">
-        <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:5px">💬 Via this chat (free)</div>
-        <div style="font-size:12px;color:var(--text3);line-height:1.6">Exports your lyrics as a prompt. Paste into claude.ai chat, get back a JSON array, then use <strong style="color:var(--text2)">⎘ Paste JSON</strong> to load it.</div>
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:26px;max-width:440px;width:100%;display:flex;flex-direction:column;gap:14px">
+      <div style="font-family:var(--lyric);font-size:17px;color:var(--gold)">Re-analyse entries</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center">
+        <div style="background:var(--bg3);border-radius:8px;padding:10px 8px">
+          <div style="font-family:var(--mono);font-size:18px;color:rgba(196,123,123,.9)">${neverDone}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px">never analysed</div>
+        </div>
+        <div style="background:var(--bg3);border-radius:8px;padding:10px 8px">
+          <div style="font-family:var(--mono);font-size:18px;color:var(--gold)">${stale}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px">older than 1 day</div>
+        </div>
+        <div style="background:var(--bg3);border-radius:8px;padding:10px 8px">
+          <div style="font-family:var(--mono);font-size:18px;color:rgba(106,184,160,.9)">${fresh}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px">done < 1 day ago</div>
+        </div>
       </div>
-      <div id="opt-api" style="background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:14px 16px;cursor:pointer;transition:all .15s">
-        <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:5px">⚡ Via local API (automatic)</div>
-        <div style="font-size:12px;color:var(--text3);line-height:1.6">Requires the proxy server running at localhost:3747. Analyses everything automatically in batches.</div>
+      <div style="display:flex;flex-direction:column;gap:7px">
+        <button id="ra-resume" style="padding:11px;background:var(--gold-bg);border:1px solid var(--gold-border);border-radius:8px;font-family:var(--ui);font-size:13px;font-weight:500;color:var(--gold);cursor:pointer;text-align:left">
+          ▶ Resume — skip recent, do ${neverDone+stale} entries
+          <div style="font-size:11px;font-weight:400;color:var(--text3);margin-top:2px">Analyses entries never done or done more than 1 day ago</div>
+        </button>
+        <button id="ra-all" style="padding:11px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;font-family:var(--ui);font-size:13px;font-weight:500;color:var(--text2);cursor:pointer;text-align:left">
+          ⟳ Full re-analyse — all ${vault.length} entries
+          <div style="font-size:11px;font-weight:400;color:var(--text3);margin-top:2px">Overwrites all existing tags including recently analysed ones</div>
+        </button>
       </div>
-      <button id="reanalyse-cancel" style="padding:8px;background:none;border:1px solid var(--border2);border-radius:8px;font-family:var(--ui);font-size:12.5px;color:var(--text3);cursor:pointer">Cancel</button>
+      <button id="ra-cancel" style="padding:8px;background:none;border:1px solid var(--border2);border-radius:8px;font-family:var(--ui);font-size:12.5px;color:var(--text3);cursor:pointer">Cancel</button>
     </div>`;
   document.body.appendChild(o);
   const close=()=>o.remove();
-  document.getElementById('reanalyse-cancel').addEventListener('click', close);
-  o.addEventListener('click', ev=>{ if(ev.target===o) close(); });
+  document.getElementById('ra-cancel').addEventListener('click',close);
+  o.addEventListener('click',ev=>{if(ev.target===o)close();});
 
-  ['opt-chat','opt-api'].forEach(id=>{
+  // Hover styles
+  ['ra-resume','ra-all'].forEach(id=>{
     const el=document.getElementById(id);
-    el.addEventListener('mouseenter',()=>{ el.style.borderColor='var(--gold-border)'; el.style.background='var(--bg4)'; });
-    el.addEventListener('mouseleave',()=>{ el.style.borderColor='var(--border2)'; el.style.background='var(--bg3)'; });
+    el.addEventListener('mouseenter',()=>el.style.opacity='.8');
+    el.addEventListener('mouseleave',()=>el.style.opacity='1');
   });
 
-  document.getElementById('opt-chat').addEventListener('click',()=>{ close(); exportForChatAnalysis(); });
-  document.getElementById('opt-api').addEventListener('click',()=>{ close(); runReanalyseViaApi(); });
+  document.getElementById('ra-resume').addEventListener('click',()=>{ close(); runAnalysisBatches('resume'); });
+  document.getElementById('ra-all').addEventListener('click',()=>{ close(); runAnalysisBatches('all'); });
 }
 
-function exportForChatAnalysis(){
-  const BATCH_SIZE = 50; // keep prompt size manageable; user can run multiple times for large vaults
-  const toExport = vault.filter(e => !e.analysed).length > 0
-    ? vault.filter(e => !e.analysed)   // prefer unanalysed entries first
-    : vault;                            // if all done, export everything for a full re-run
-  const limited = toExport.slice(0, BATCH_SIZE);
-  const isPartial = limited.length < vault.length;
+async function runAnalysisBatches(mode){
+  const DAY=24*60*60*1000;
+  const now=Date.now();
 
-  const taxonomy = Object.entries({
-    'Love':['Romantic love','Self-love','Motherly love','Heartbreak','Longing','Passion','Obsession','Unrequited love'],
-    'Identity':['Self-image','Confidence','Vulnerability','Growth','Purpose','Heritage','Masculinity / Femininity'],
-    'Ambition':['Success','Money','Hustle','Fame','Legacy','Competition','Goals'],
-    'Pain':['Loss','Grief','Betrayal','Struggle','Trauma','Loneliness','Addiction'],
-    'Joy':['Celebration','Gratitude','Freedom','Euphoria','Nostalgia','Fun'],
-    'Conflict':['Anger','Revenge','Enemies','Street life','Power','War','Justice'],
-    'Spirituality':['Faith','God','The universe','Death','Karma','Soul','Dreams'],
-    'Relationships':['Friendship','Family','Loyalty','Trust','Toxic relationships','Community'],
-    'World':['Politics','Society','Inequality','Nature','Time','Change'],
-    'Craft':['Wordplay','Music','Art','Creativity','Storytelling']
-  }).map(([p,s])=>`${p}: ${s.join(', ')}`).join('\n');
+  // Pick which entries need processing
+  const targets = mode==='all'
+    ? vault.map((_,i)=>i)
+    : vault.map((e,i)=>i).filter(i=>{
+        const e=vault[i];
+        return !e.analysed || !e.analysedAt || (now-e.analysedAt)>DAY;
+      });
 
-  const entriesText = limited.map((e,i) => {
-    const realIdx = vault.indexOf(e);
-    return `[${realIdx}]\n${e.text.substring(0,400)}`;
-  }).join('\n\n---\n\n');
+  if(!targets.length){ showNotice('Nothing to analyse — all entries were done less than 1 day ago.'); return; }
 
-  const prompt =
-`Analyse the following ${limited.length} lyric entries (English / European Portuguese / mixed).
-
-TAXONOMY:
-${taxonomy}
-
-For EACH entry return a JSON array (same order as input):
-[{
-  "vaultIndex": <the number in brackets before each entry>,
-  "language": "en" | "pt" | "mixed",
-  "themeParents": ["1-2 parent categories"],
-  "themeSubs": ["1-3 sub-themes from those parents"],
-  "mood": "Melancholic" | "Hopeful" | "Defiant" | "Nostalgic" | "Joyful" | "Angry" | "Longing" | "Other",
-  "rhymeGroup": "core end-phoneme in English e.g. ight ain ão ade",
-  "keywords": ["2-4 English concepts"]
-}]
-
-All labels must be in English. Return ONLY the JSON array, nothing else.
-
-ENTRIES:
-${entriesText}`;
-
-  const o=document.createElement('div');
-  o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
-  o.innerHTML=`
-    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:24px;max-width:620px;width:100%;display:flex;flex-direction:column;gap:14px;max-height:90vh">
-      <div style="font-family:var(--lyric);font-size:17px;color:var(--gold)">Chat analysis prompt</div>
-      <div style="font-size:12px;color:var(--text2);line-height:1.7;background:var(--bg3);border-radius:8px;padding:10px 12px;border-left:3px solid var(--gold)">
-        ${isPartial ? `<strong style="color:var(--gold)">Note:</strong> Exporting ${limited.length} of ${vault.length} entries (unanalysed first). Run again after loading to do the rest.<br>` : ''}
-        <strong style="color:var(--text)">Steps:</strong> 1. Copy prompt → 2. Paste into the claude.ai chat and send → 3. Copy the returned JSON → 4. Click <strong>⎘ Paste JSON</strong> in the sidebar
-      </div>
-      <textarea readonly id="chat-export-ta" style="flex:1;min-height:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text2);font-family:var(--mono);font-size:10px;line-height:1.6;resize:vertical;outline:none"></textarea>
-      <div style="display:flex;gap:8px">
-        <button id="chat-copy-btn" style="flex:1;padding:10px;background:var(--gold);color:#0c0c0d;border:none;border-radius:8px;font-family:var(--ui);font-size:13px;font-weight:500;cursor:pointer">Copy prompt</button>
-        <button id="chat-close-btn" style="padding:10px 16px;background:var(--bg3);color:var(--text2);border:1px solid var(--border2);border-radius:8px;font-family:var(--ui);font-size:13px;cursor:pointer">Close</button>
-      </div>
-      <div id="chat-copy-status" style="font-size:11.5px;color:var(--text3);text-align:center;min-height:16px"></div>
-    </div>`;
-  document.body.appendChild(o);
-
-  // Set textarea value directly (avoids HTML encoding issues)
-  document.getElementById('chat-export-ta').value = prompt;
-
-  const close2=()=>o.remove();
-  document.getElementById('chat-close-btn').addEventListener('click', close2);
-  o.addEventListener('click', ev=>{ if(ev.target===o) close2(); });
-  document.getElementById('chat-copy-btn').addEventListener('click', function(){
-    navigator.clipboard.writeText(prompt).then(()=>{
-      this.textContent='✓ Copied!';
-      document.getElementById('chat-copy-status').textContent='Now paste into the claude.ai chat window and send.';
-      setTimeout(()=>{ this.textContent='Copy prompt'; },2500);
-    }).catch(()=>{
-      const ta=document.getElementById('chat-export-ta');
-      ta.select(); document.execCommand('copy');
-      this.textContent='✓ Copied!';
-    });
-  });
-}
-
-// Also hook into the ⎘ Paste JSON flow to handle vaultIndex merging
-// When Claude returns analysis via chat, entries have a vaultIndex field.
-// The existing pasteLoad function needs to detect and apply this format.
-const _originalPasteLoad = window._pasteLoadHandler; // reference handled inline in showPasteLoad
-
-async function runReanalyseViaApi(){
   showImport(); await new Promise(r=>setTimeout(r,80));
   document.getElementById('import-status').style.display='block';
-  vault.forEach(e=>{e.language='';e.themeParents=[];e.themeSubs=[];e.mood='';e.rhymeGroup='';e.keywords=[];e.analysed=false;}); save();
-  setLog(`Re-analysing ${vault.length} entries…`); setProg(0);
-  const B=12; let done=0;
-  for(let b=0;b<vault.length;b+=B){
-    const sl=vault.slice(b,b+B); addLog(`→ Batch ${Math.floor(b/B)+1}/${Math.ceil(vault.length/B)}`);
-    try{
-      const res=await apiCall(analysisSysPrompt(),sl.map((e,i)=>`${i}:\n${e.text.substring(0,400)}`).join('\n\n---\n\n'),3000);
-      const an=parseJson(res)||[];
-      an.forEach((a,i)=>{if(vault[b+i])Object.assign(vault[b+i],{language:a.language||'',themeParents:a.themeParents||[],themeSubs:a.themeSubs||[],mood:a.mood||'',rhymeGroup:a.rhymeGroup||'',keywords:a.keywords||[],analysed:true});});
-      save();
-    }catch(e){ addLog(`⚠ Batch ${Math.floor(b/B)+1} failed — try via chat instead`); }
-    done+=sl.length; setProg(Math.round(done/vault.length*100));
+
+  if(mode==='all'){
+    vault.forEach(e=>{e.language='';e.themeParents=[];e.themeSubs=[];e.mood='';e.rhymeGroup='';e.keywords=[];e.analysed=false;e.analysedAt=null;});
+    save();
   }
-  addLog(`✓ Re-analysis complete.`); buildFilterUI();
+
+  const total=targets.length;
+  const B=8;
+  const modeLabel = mode==='all'?'Re-analysing':'Resuming analysis for';
+  setLog(`${modeLabel} ${total} entries in batches of ${B}…`);
+  setProg(0);
+  ensureProgressBar();
+  const statusEl=document.getElementById('status-label');
+  if(statusEl) statusEl.innerHTML=`${mode==='all'?'Re-analysing':'Resuming'}… <span id="batch-counter">0 / ${total}</span>`;
+
+  let done=0, failed=0;
+  // Process in batches of consecutive vault indices
+  for(let b=0;b<targets.length;b+=B){
+    const slice=targets.slice(b,b+B);
+    const bNum=Math.floor(b/B)+1, bTotal=Math.ceil(targets.length/B);
+    addLog(`→ Batch ${bNum}/${bTotal}`);
+    try{
+      const res=await apiCallWithRetry(
+        analysisSysPrompt(),
+        slice.map((vi,i)=>`${i}:\n${vault[vi].text.substring(0,350)}`).join('\n\n---\n\n'),
+        2500,{timeoutMs:40000,retries:3}
+      );
+      const an=parseJson(res)||[];
+      an.forEach((a,i)=>{
+        const vi=slice[i];
+        if(vault[vi]) Object.assign(vault[vi],{
+          language:a.language||'',themeParents:a.themeParents||[],
+          themeSubs:a.themeSubs||[],mood:a.mood||'',
+          rhymeGroup:a.rhymeGroup||'',keywords:a.keywords||[],
+          analysed:true,analysedAt:Date.now()
+        });
+      });
+      save();
+      addLog(`  ✓ Batch ${bNum} done`);
+    }catch(err){
+      failed++;
+      addLog(`  ✗ Batch ${bNum} failed: ${err.message}`);
+    }
+    done+=slice.length;
+    setProg(Math.round(done/total*100));
+    updateBatchCounter(done,total);
+    if(b+B<targets.length) await new Promise(r=>setTimeout(r,8000));
+  }
+
+  if(failed>0) addLog(`⚠ ${failed} batch(es) failed — hit Resume again to retry.`);
+  else addLog(`✓ ${mode==='all'?'Re-analysis':'Resume'} complete.`);
+  buildFilterUI();
+}
+
+function ensureProgressBar(){
+  // Insert a dedicated progress section above the log box if not already there
+  const logBox=document.getElementById('log-box');
+  if(!logBox||document.getElementById('analysis-progress')) return;
+  const wrapper=document.createElement('div');
+  wrapper.id='analysis-progress';
+  wrapper.style.cssText='margin-bottom:10px';
+  wrapper.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+      <span style="font-size:10.5px;color:var(--text3);font-family:var(--mono)">Progress</span>
+      <span id="batch-pct" style="font-size:10.5px;color:var(--gold);font-family:var(--mono)">0%</span>
+    </div>
+    <div style="height:6px;background:var(--bg4);border-radius:3px;overflow:hidden">
+      <div id="analysis-fill" style="height:100%;width:0%;background:var(--gold);border-radius:3px;transition:width .4s ease"></div>
+    </div>`;
+  logBox.parentNode.insertBefore(wrapper, logBox);
+}
+
+function updateBatchCounter(done, total){
+  const counter=document.getElementById('batch-counter');
+  const pct=document.getElementById('batch-pct');
+  const fill=document.getElementById('analysis-fill');
+  const p=Math.round(done/total*100);
+  if(counter) counter.textContent=`${done} / ${total}`;
+  if(pct) pct.textContent=`${p}%`;
+  if(fill) fill.style.width=p+'%';
 }
 
 function clearVault(){
@@ -1607,50 +1699,20 @@ function showPasteLoad(){
       catch(pe){status.textContent='JSON error: '+pe.message;return;}
       if(data&&!Array.isArray(data)&&Array.isArray(data.vault))data=data.vault;
       if(!Array.isArray(data)){status.textContent='Expected a JSON array — got '+typeof data+'. Check your copy.';return;}
-
-      // Detect format: analysis result (has vaultIndex) vs full vault entries (has text/id)
-      const isAnalysis = data.length > 0 && data[0].vaultIndex !== undefined;
-
-      if(isAnalysis){
-        // Apply analysis tags back to vault by vaultIndex
-        let applied=0;
-        data.forEach(a=>{
-          const idx=a.vaultIndex;
-          if(idx!==undefined && vault[idx]){
-            Object.assign(vault[idx],{
-              language:a.language||vault[idx].language||'',
-              themeParents:a.themeParents||vault[idx].themeParents||[],
-              themeSubs:a.themeSubs||vault[idx].themeSubs||[],
-              mood:a.mood||vault[idx].mood||'',
-              rhymeGroup:a.rhymeGroup||vault[idx].rhymeGroup||'',
-              keywords:a.keywords||vault[idx].keywords||[],
-              analysed:true
-            });
-            applied++;
-          }
-        });
-        runMigration();save();buildFilterUI();applyFilters();
-        status.style.color='rgba(106,184,160,.9)';
-        status.textContent=`✓ Applied analysis to ${applied} entries`;
-        if(fbReady&&applied>0)syncToFirebase();
-        setTimeout(close,1600);
-      } else {
-        // Full vault import (existing entries with text/id)
-        const existing=new Set(vault.map(e=>String(e.id)));
-        let added=0;
-        data.forEach(e=>{
-          if(e&&(e.text||e.body)){
-            if(e.body&&!e.text)e.text=e.body;
-            if(!e.id)e.id=Date.now()+Math.random();
-            if(!existing.has(String(e.id))){vault.push(e);added++;}
-          }
-        });
-        runMigration();save();buildFilterUI();applyFilters();
-        status.style.color='rgba(106,184,160,.9)';
-        status.textContent=`✓ Loaded ${added} entries (${data.length-added} duplicates skipped)`;
-        if(fbReady&&added>0)syncToFirebase();
-        setTimeout(close,1600);
-      }
+      const existing=new Set(vault.map(e=>String(e.id)));
+      let added=0;
+      data.forEach(e=>{
+        if(e&&(e.text||e.body)){
+          if(e.body&&!e.text)e.text=e.body;
+          if(!e.id)e.id=Date.now()+Math.random();
+          if(!existing.has(String(e.id))){vault.push(e);added++;}
+        }
+      });
+      runMigration();save();buildFilterUI();applyFilters();
+      status.style.color='rgba(106,184,160,.9)';
+      status.textContent=`✓ Loaded ${added} entries (${data.length-added} duplicates skipped)`;
+      if(fbReady&&added>0)syncToFirebase();
+      setTimeout(close,1600);
     }catch(err){status.textContent='Unexpected error: '+err.message;}
   });
 }
@@ -1696,43 +1758,54 @@ function addLog(m){const lb=document.getElementById('log-box');if(!lb)return;lb.
 function setProg(p){const el=document.getElementById('prog');if(el)el.style.width=p+'%';}
 
 // ── API ROUTING ───────────────────────────────────────────────
-// Three modes, detected automatically:
-//  1. claude.ai  → direct fetch to api.anthropic.com (no CORS issue, key injected by platform)
-//  2. localhost:3747 proxy → POST /api (proxy adds the API key server-side)
-//  3. file:// or other → show setup instructions
+// Try direct Anthropic call first (works in claude.ai artifacts).
+// Fall back to local proxy if running on localhost.
+// Show setup instructions only if both fail.
 
-const IS_CLAUDE_AI = location.hostname.includes('claude.ai') || location.hostname.includes('anthropic.com');
-const IS_PROXY     = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-const PROXY_URL    = `${location.protocol}//${location.hostname}:3747/api`;
+const IS_PROXY = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const PROXY_URL = `${location.protocol}//${location.hostname}:3747/api`;
 
 async function apiCall(sys, msg, maxT){
   const payload = {model:'claude-sonnet-4-20250514', max_tokens:maxT, system:sys, messages:[{role:'user',content:msg}]};
 
-  if(IS_CLAUDE_AI){
-    // Inside claude.ai — direct call works, platform handles auth
+  // Always try direct Anthropic call first — works inside claude.ai artifacts
+  try{
     const r = await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
     });
-    const d = await r.json(); return d.content?.[0]?.text||'[]';
-  }
-
-  if(IS_PROXY){
-    // Running via local proxy server — proxy adds the API key
-    const r = await fetch(PROXY_URL,{
-      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
-    });
-    if(r.status===401){
-      showApiKeyPrompt();
-      throw new Error('No API key configured in proxy. Enter it in the prompt.');
+    if(r.ok || r.status===400){ // 400 = API error (bad request), not a CORS/network issue
+      const d = await r.json();
+      if(d.error) throw new Error(d.error.message||JSON.stringify(d.error));
+      return d.content?.[0]?.text||'[]';
     }
-    const d = await r.json();
-    if(d.error) throw new Error(d.error);
-    return d.content?.[0]?.text||'[]';
+    // Non-ok status that isn't a CORS block — still treat as API response
+    const d = await r.json().catch(()=>({}));
+    if(d.error) throw new Error(d.error.message||JSON.stringify(d.error));
+    throw new Error(`HTTP ${r.status}`);
+  } catch(directErr){
+    // If it's a CORS/network error (TypeError: Failed to fetch) and we're on localhost, try proxy
+    if(IS_PROXY && (directErr instanceof TypeError || directErr.message.includes('fetch'))){
+      try{
+        const r = await fetch(PROXY_URL,{
+          method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+        });
+        if(r.status===401){ showApiKeyPrompt(); throw new Error('No API key set in proxy.'); }
+        const d = await r.json();
+        if(d.error) throw new Error(d.error);
+        return d.content?.[0]?.text||'[]';
+      }catch(proxyErr){
+        if(proxyErr.message.includes('No API key')) throw proxyErr;
+        // Proxy also failed — show setup
+        showApiKeyPrompt();
+        throw proxyErr;
+      }
+    }
+    // Direct call failed and no proxy — show setup only if it's a network/CORS block
+    if(directErr instanceof TypeError || directErr.message.includes('fetch')){
+      showApiKeyPrompt();
+    }
+    throw directErr;
   }
-
-  // file:// or unknown — can't make API calls
-  showApiKeyPrompt();
-  throw new Error('API calls require the local proxy server. See setup instructions.');
 }
 
 function showApiKeyPrompt(){
@@ -1785,13 +1858,6 @@ async function saveApiKey(){
     if(d.ok){ document.getElementById('api-setup-overlay')?.remove(); showNotice('✓ API key saved. AI features are now active.'); }
     else{ showNotice('Failed to save key: '+(d.error||'unknown error')); }
   }catch(e){ showNotice('Could not reach the proxy server. Make sure server.js is running.'); }
-}
-
-// On load, if running via proxy, silently check if key is already set
-if(IS_PROXY){
-  fetch(`${location.protocol}//${location.hostname}:3747/has-key`).then(r=>r.json()).then(d=>{
-    if(!d.hasKey) showApiKeyPrompt();
-  }).catch(()=>{}); // proxy not running — will show error when they try to use AI features
 }
 
 function parseJson(raw){try{return JSON.parse(raw.replace(/```json|```/g,'').trim());}catch(e){return null;}}</script>
